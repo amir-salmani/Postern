@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "postern",
+  "account_id": "26b112f83fd08941cf1a78dcb644266c",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-01",
   "observability": { "enabled": true },
@@ -8,16 +9,16 @@
   // Per-deploy config. Everything here is safe to commit — no secrets.
   "vars": {
     // The domain whose mail this instance owns.
-    "MAIL_DOMAIN": "example.com",
+    "MAIL_DOMAIN": "amirsalmani.com",
 
     // Local-parts that land in the inbox. Everything else caught by the
     // catch-all rule goes to quarantine. Comma-separated, no @.
     "INBOX_ADDRESSES": "hi,amir",
 
-    // The safety net. A verified Email Routing destination address.
-    // Every message is forwarded here regardless of what storage does.
-    // Leave empty to disable — but don't, until you trust this thing.
-    "FORWARD_TO": "",
+    // NOTE: FORWARD_TO is set as a secret, not here — it is a real mailbox
+    // address and this file is public. `wrangler secret put FORWARD_TO`.
+    // The safety net forwards every message there regardless of what storage
+    // does. Unset disables it — but don't, until you trust this thing.
 
     // Cloudflare Access. The API fails closed when these are unset, so an
     // unconfigured deploy serves nothing rather than serving the mailbox.
@@ -30,7 +31,7 @@
   "assets": { "directory": "./web" },
 
   "d1_databases": [
-    { "binding": "DB", "database_name": "postern", "database_id": "REPLACE_ME" }
+    { "binding": "DB", "database_name": "postern", "database_id": "e32fa224-dac0-4562-b33b-98d6ac8f6dba" }
   ],
 
   "r2_buckets": [

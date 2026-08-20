@@ -91,9 +91,24 @@ npx wrangler d1 create postern           # put the id into wrangler.jsonc
 npx wrangler r2 bucket create postern-raw
 npm run schema
 
-# Config: set MAIL_DOMAIN, INBOX_ADDRESSES and FORWARD_TO in wrangler.jsonc
+# Config: set MAIL_DOMAIN and INBOX_ADDRESSES in wrangler.jsonc
 npm run deploy
+
+# The safety net is a secret, not a var — it's a real mailbox address and
+# wrangler.jsonc is committed.
+npx wrangler secret put FORWARD_TO
 ```
+
+Start with a single test address rather than the catch-all, so a mistake
+can't touch your real mail:
+
+```bash
+npx wrangler email routing rules create \
+  --name "postern test" --to postern-test@yourdomain.com --worker postern
+```
+
+Move the catch-all over only once you've confirmed a message both stored *and*
+forwarded.
 
 Then create a Cloudflare Access application for the hostname you deployed to,
 and copy its **Application Audience (AUD) tag** and your team domain into
