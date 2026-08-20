@@ -6,9 +6,12 @@
  * an SMTP smarthost or Cloudflare Email Sending later, without a rewrite.
  * Hard-coding one provider is the most likely way this project rots.
  */
+import { resendSender } from "./resend";
+
 export interface OutboundMessage {
   from: string;
   to: string[];
+  bcc?: string[];
   subject: string;
   text: string;
   html?: string;
@@ -25,4 +28,13 @@ export interface SendResult {
 export interface Sender {
   readonly name: string;
   send(message: OutboundMessage): Promise<SendResult>;
+}
+
+/**
+ * Pick the sender from config. Swapping Resend for an SMTP smarthost or
+ * Cloudflare Email Sending is a change here and nowhere else.
+ */
+export function getSender(env: { RESEND_API_KEY?: string }): Sender {
+  if (env.RESEND_API_KEY) return resendSender(env.RESEND_API_KEY);
+  throw new Error("No sender configured — set the RESEND_API_KEY secret.");
 }

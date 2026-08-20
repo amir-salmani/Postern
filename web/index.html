@@ -23,6 +23,7 @@
     <button role="tab" data-folder="quarantine">Quarantine</button>
     <button role="tab" data-folder="sent">Sent</button>
   </nav>
+  <button id="new" class="ghost">New</button>
   <button id="refresh" class="ghost" title="Refresh">Refresh</button>
 </header>
 
@@ -35,6 +36,17 @@
 
   <section class="reader" aria-label="Message">
     <div id="reader-empty" class="status">Select a message.</div>
+    <form id="compose" class="compose hidden">
+      <input id="c-to" type="text" placeholder="To" autocomplete="off" required>
+      <input id="c-subject" type="text" placeholder="Subject" autocomplete="off">
+      <textarea id="c-body" rows="12" placeholder="Write your message…" required></textarea>
+      <div class="controls">
+        <button type="submit" id="c-send" class="ghost">Send</button>
+        <button type="button" id="c-cancel" class="ghost">Cancel</button>
+        <span id="c-status" class="status"></span>
+      </div>
+    </form>
+
     <article id="reader" class="hidden">
       <h2 id="subject"></h2>
       <dl class="meta">
@@ -46,6 +58,7 @@
       <div class="controls">
         <button id="toggle-remote" class="ghost">Load remote images</button>
         <button id="toggle-source" class="ghost">Plain text</button>
+        <button id="reply" class="ghost">Reply</button>
         <a id="download" class="ghost" download>Download .eml</a>
       </div>
       <div id="attachments" class="attachments hidden"></div>

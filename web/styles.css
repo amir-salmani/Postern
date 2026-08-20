@@ -213,6 +213,30 @@ main {
   background: var(--surface);
 }
 
+.compose {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1.2rem 1.5rem;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.compose input, .compose textarea {
+  background: var(--surface-alt);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  color: var(--ink);
+  font: inherit;
+  padding: 0.5rem 0.7rem;
+  resize: vertical;
+}
+
+.compose textarea { font-family: var(--mono); font-size: 0.85rem; line-height: 1.6; }
+.compose input:focus, .compose textarea:focus { outline: none; border-color: var(--ink); }
+.compose .controls { padding: 0; align-items: center; }
+.compose .status { padding: 0; }
+
 .status { padding: 1.5rem; color: var(--ink-dim); font-size: 0.85rem; }
 .hidden { display: none !important; }
 

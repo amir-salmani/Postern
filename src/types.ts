@@ -13,6 +13,13 @@ export interface Env {
   ACCESS_TEAM_DOMAIN: string;
   /** Application Audience tag from the Access application. */
   ACCESS_AUD: string;
+
+  /** Address outbound mail is sent from, e.g. "hi@yourdomain.com". */
+  SEND_FROM: string;
+  /** Display name on outbound mail. */
+  SEND_NAME: string;
+  /** Resend API key. Secret — never a var. */
+  RESEND_API_KEY?: string;
 }
 
 export type Folder = "inbox" | "quarantine" | "sent";

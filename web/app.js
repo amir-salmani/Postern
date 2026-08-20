@@ -23,6 +23,7 @@ const state = {
   parsed: null,
   allowRemote: false,
   showSource: false,
+  compose: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -104,6 +105,7 @@ async function openMessage(message) {
   state.showSource = false;
 
   el("reader-empty").classList.add("hidden");
+  el("compose").classList.add("hidden");
   el("reader").classList.remove("hidden");
   el("subject").textContent = message.subject || "(no subject)";
   el("from").textContent = message.header_from || message.envelope_from;
@@ -187,6 +189,78 @@ function renderAttachments() {
   }
 }
 
+/**
+ * Compose. Replies carry In-Reply-To and References so the recipient's client
+ * threads them with the original — without those, every reply you send opens
+ * a new orphan conversation on their side.
+ */
+function openCompose({ to = "", subject = "", inReplyTo = null, references = null, threadId = null } = {}) {
+  state.compose = { inReplyTo, references, threadId };
+  el("c-to").value = to;
+  el("c-subject").value = subject;
+  el("c-body").value = "";
+  el("c-status").textContent = "";
+  el("reader").classList.add("hidden");
+  el("reader-empty").classList.add("hidden");
+  el("compose").classList.remove("hidden");
+  el("c-body").focus();
+}
+
+function closeCompose() {
+  el("compose").classList.add("hidden");
+  if (state.selected) el("reader").classList.remove("hidden");
+  else el("reader-empty").classList.remove("hidden");
+}
+
+function replyTo(message) {
+  const address = addressOf(message.header_from) || message.envelope_from;
+  const subject = /^re:/i.test(message.subject || "") ? message.subject : `Re: ${message.subject || ""}`;
+  openCompose({
+    to: address,
+    subject,
+    inReplyTo: message.message_id || null,
+    references: message.refs || null,
+    threadId: message.thread_id || null,
+  });
+}
+
+function addressOf(header) {
+  if (!header) return "";
+  const angled = header.match(/<([^>]+)>/);
+  return (angled ? angled[1] : header).trim();
+}
+
+async function submitCompose(event) {
+  event.preventDefault();
+  const button = el("c-send");
+  button.disabled = true;
+  el("c-status").textContent = "Sending…";
+
+  try {
+    const response = await fetch("/api/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: el("c-to").value.split(",").map((s) => s.trim()).filter(Boolean),
+        subject: el("c-subject").value,
+        text: el("c-body").value,
+        inReplyTo: state.compose?.inReplyTo ?? null,
+        references: state.compose?.references ?? null,
+        threadId: state.compose?.threadId ?? null,
+      }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `Send failed (${response.status})`);
+
+    el("c-status").textContent = result.stored ? "Sent." : "Sent (copy not stored).";
+    setTimeout(closeCompose, 800);
+  } catch (err) {
+    el("c-status").textContent = err.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function clearReader() {
   state.selected = null;
   state.parsed = null;
@@ -235,6 +309,10 @@ document.querySelectorAll(".folders button").forEach((button) => {
 });
 
 el("refresh").addEventListener("click", () => loadFolder(state.folder));
+el("new").addEventListener("click", () => openCompose());
+el("reply").addEventListener("click", () => state.selected && replyTo(state.selected));
+el("c-cancel").addEventListener("click", closeCompose);
+el("compose").addEventListener("submit", submitCompose);
 el("more").addEventListener("click", () => loadFolder(state.folder, { append: true }));
 
 el("toggle-remote").addEventListener("click", () => {
