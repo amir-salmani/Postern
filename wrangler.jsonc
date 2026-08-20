@@ -27,8 +27,8 @@
 
     // Cloudflare Access. The API fails closed when these are unset, so an
     // unconfigured deploy serves nothing rather than serving the mailbox.
-    "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": ""
+    "ACCESS_TEAM_DOMAIN": "amirsalmani.cloudflareaccess.com",
+    "ACCESS_AUD": "cf38f85676b2cd6be36e323c486bb22f0b2c6e416e74f19ad63b1feb2c51bf2c"
   },
 
   // Served by Cloudflare before the Worker runs, so page loads cost nothing
