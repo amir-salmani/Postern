@@ -18,7 +18,49 @@ export async function handleScheduled(env: Env): Promise<void> {
   } catch (err) {
     console.error("postern: scheduled fetch failed", err);
   }
+  await purgeExpiredTrash(env);
   await remindUnread(env);
+}
+
+const TRASH_RETENTION_MS = 30 * 86_400_000;
+
+/**
+ * Empty the bin on our own clock. Thirty days from when you deleted it, not
+ * thirty days from when it arrived — which is what Resend's retention would
+ * have given, and it would have surprised you.
+ */
+async function purgeExpiredTrash(env: Env): Promise<void> {
+  const cutoff = Date.now() - TRASH_RETENTION_MS;
+  const { results } = await env.DB.prepare(
+    `SELECT id, r2_key FROM messages
+      WHERE folder = 'trash' AND trashed_ms IS NOT NULL AND trashed_ms < ?
+      LIMIT 100`,
+  )
+    .bind(cutoff)
+    .all();
+
+  const expired = (results ?? []) as Array<{ id: string; r2_key: string }>;
+  if (!expired.length) return;
+
+  for (const message of expired) {
+    const { results: files } = await env.DB.prepare(
+      `SELECT r2_key FROM attachments WHERE message_id = ?`,
+    ).bind(message.id).all();
+
+    await Promise.all([
+      env.RAW.delete(message.r2_key),
+      ...((files ?? []) as Array<{ r2_key: string }>).map((f) => env.RAW.delete(f.r2_key)),
+    ]);
+
+    await env.DB.batch([
+      env.DB.prepare(`DELETE FROM messages WHERE id = ?`).bind(message.id),
+      env.DB.prepare(`DELETE FROM attachments WHERE message_id = ?`).bind(message.id),
+      env.DB.prepare(`DELETE FROM messages_fts WHERE id = ?`).bind(message.id),
+      env.DB.prepare(`INSERT OR REPLACE INTO tombstones (id, deleted_ms) VALUES (?, ?)`)
+        .bind(message.id, Date.now()),
+    ]);
+  }
+  console.log(`postern: purged ${expired.length} expired from trash`);
 }
 
 /**

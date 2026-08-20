@@ -3,14 +3,28 @@ import { runBackfill } from "./backfill";
 import { getSender } from "./senders";
 import type { Env, Folder } from "./types";
 
-const FOLDERS: Folder[] = ["inbox", "quarantine", "sent"];
+const FOLDERS: Folder[] = ["inbox", "quarantine", "sent", "trash"];
+const TRASH_RETENTION_MS = 30 * 86_400_000;
 const PAGE_SIZE = 50;
 
-const SELECT_COLUMNS = `SELECT id, thread_id, envelope_from, envelope_to, header_from, subject,
-            message_id, in_reply_to, refs,
-            received_ms, size_bytes, folder, seen, has_attach,
-            spf, dkim, dmarc
-       FROM messages`;
+const SELECT_COLUMNS = `SELECT m.id, m.thread_id, m.envelope_from, m.envelope_to, m.header_from,
+            m.subject, m.message_id, m.in_reply_to, m.refs,
+            m.received_ms, m.size_bytes, m.folder, m.seen, m.has_attach,
+            m.spf, m.dkim, m.dmarc, m.trashed_ms,
+            (SELECT COUNT(*) FROM messages t
+              WHERE t.thread_id = m.thread_id AND t.folder != 'trash') AS thread_count
+       FROM messages m`;
+
+/**
+ * FTS5 treats punctuation as syntax, so a raw subject line can be a syntax
+ * error rather than a search. Quote each term and prefix-match the last one
+ * so results narrow as you type.
+ */
+function ftsQuery(input: string): string {
+  const terms = input.replace(/["*]/g, " ").split(/\s+/).filter(Boolean);
+  if (!terms.length) return '""';
+  return terms.map((t, i) => (i === terms.length - 1 ? `"${t}"*` : `"${t}"`)).join(" AND ");
+}
 
 /**
  * The read API. Phase 2 is deliberately read-only — sending arrives in
@@ -28,6 +42,14 @@ export async function handleApi(request: Request, env: Env, url: URL): Promise<R
 
   if (segments[0] === "messages" && segments.length === 1 && request.method === "GET") {
     return listMessages(env, url);
+  }
+
+  if (segments[0] === "threads" && segments[1] && request.method === "GET") {
+    return thread(env, segments[1]);
+  }
+
+  if (segments[0] === "identities" && request.method === "GET") {
+    return json({ identities: identities(env), name: env.SEND_NAME });
   }
 
   if (segments[0] === "overview" && request.method === "GET") {
@@ -54,8 +76,16 @@ export async function handleApi(request: Request, env: Env, url: URL): Promise<R
     const id = segments[1];
     if (segments[2] === "raw" && request.method === "GET") return rawMessage(env, id);
     if (segments[2] === "seen" && request.method === "POST") return markSeen(env, id);
+    if (segments[2] === "attachments" && request.method === "GET") {
+      return segments[3] ? attachment(env, id, segments[3]) : listAttachments(env, id);
+    }
     if (!segments[2] && request.method === "PATCH") return patchMessage(request, env, id);
-    if (!segments[2] && request.method === "DELETE") return deleteMessage(env, id);
+    // Soft by default; ?purge=1 is the irreversible one.
+    if (!segments[2] && request.method === "DELETE") {
+      return url.searchParams.get("purge") === "1"
+        ? purgeMessage(env, id)
+        : trashMessage(env, id);
+    }
   }
 
   return json({ error: "not found" }, 404);
@@ -99,6 +129,7 @@ async function overview(env: Env): Promise<Response> {
 
   return json({
     counts,
+    trashRetentionDays: TRASH_RETENTION_MS / 86_400_000,
     storage: { messages: storage?.messages ?? 0, bytes: storage?.bytes ?? 0, limitBytes: 10 * 1024 ** 3 },
     series: fillDays((series.results ?? []) as Array<{ day: string; received: number; sent: number }>, now),
     quota: await resendQuota(env, now),
@@ -173,6 +204,89 @@ async function folderCounts(env: Env): Promise<Response> {
   return json({ counts });
 }
 
+/** Every message in a conversation, oldest first — a thread reads downward. */
+async function thread(env: Env, threadId: string): Promise<Response> {
+  const { results } = await env.DB.prepare(
+    `${SELECT_COLUMNS}
+      WHERE m.thread_id = ? AND m.folder != 'trash'
+      ORDER BY m.received_ms ASC`,
+  )
+    .bind(threadId)
+    .all();
+  return json({ messages: results ?? [] });
+}
+
+async function listAttachments(env: Env, messageId: string): Promise<Response> {
+  const { results } = await env.DB.prepare(
+    `SELECT id, filename, content_type, size_bytes FROM attachments WHERE message_id = ?`,
+  )
+    .bind(messageId)
+    .all();
+  return json({ attachments: results ?? [] });
+}
+
+async function attachment(env: Env, messageId: string, attachmentId: string): Promise<Response> {
+  const row = await env.DB.prepare(
+    `SELECT r2_key, filename, content_type FROM attachments WHERE id = ? AND message_id = ? LIMIT 1`,
+  )
+    .bind(attachmentId, messageId)
+    .first<{ r2_key: string; filename: string; content_type: string }>();
+  if (!row) return json({ error: "not found" }, 404);
+
+  const object = await env.RAW.get(row.r2_key);
+  if (!object) return json({ error: "attachment missing from storage" }, 410);
+
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": row.content_type || "application/octet-stream",
+      "Content-Disposition": `attachment; filename="${(row.filename || "attachment").replace(/"/g, "")}"`,
+      "Cache-Control": "private, max-age=31536000, immutable",
+    },
+  });
+}
+
+/**
+ * Trash keeps our own copy and our own clock. Resend's 30-day retention runs
+ * from receipt, not from deletion, so a message trashed on day 29 would be
+ * recoverable for one day — and composed mail never enters Resend's receiving
+ * store at all. Keeping the object here makes the window mean what it says.
+ */
+async function trashMessage(env: Env, id: string): Promise<Response> {
+  const result = await env.DB.prepare(
+    `UPDATE messages SET folder = 'trash', trashed_ms = ? WHERE id = ? AND folder != 'trash'`,
+  )
+    .bind(Date.now(), id)
+    .run();
+  if (!result.meta.changes) return json({ error: "not found" }, 404);
+  return json({ ok: true, folder: "trash" });
+}
+
+/** Irreversible: object, row, index and attachments all go, tombstone stays. */
+async function purgeMessage(env: Env, id: string): Promise<Response> {
+  const row = await env.DB.prepare(`SELECT r2_key FROM messages WHERE id = ? LIMIT 1`)
+    .bind(id)
+    .first<{ r2_key: string }>();
+  if (!row) return json({ error: "not found" }, 404);
+
+  const { results } = await env.DB.prepare(
+    `SELECT r2_key FROM attachments WHERE message_id = ?`,
+  ).bind(id).all();
+
+  await Promise.all([
+    env.RAW.delete(row.r2_key),
+    ...((results ?? []) as Array<{ r2_key: string }>).map((a) => env.RAW.delete(a.r2_key)),
+  ]);
+
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM messages WHERE id = ?`).bind(id),
+    env.DB.prepare(`DELETE FROM attachments WHERE message_id = ?`).bind(id),
+    env.DB.prepare(`DELETE FROM messages_fts WHERE id = ?`).bind(id),
+    env.DB.prepare(`INSERT OR REPLACE INTO tombstones (id, deleted_ms) VALUES (?, ?)`)
+      .bind(id, Date.now()),
+  ]);
+  return json({ ok: true });
+}
+
 /** Mark read/unread, or move between folders. */
 async function patchMessage(request: Request, env: Env, id: string): Promise<Response> {
   let body: { seen?: boolean; folder?: Folder };
@@ -191,6 +305,9 @@ async function patchMessage(request: Request, env: Env, id: string): Promise<Res
   if (body.folder && FOLDERS.includes(body.folder)) {
     updates.push("folder = ?");
     values.push(body.folder);
+    // Restoring must clear the countdown, or the purge would still take it.
+    updates.push("trashed_ms = ?");
+    values.push(body.folder === "trash" ? Date.now() : null);
   }
   if (!updates.length) return json({ error: "nothing to update" }, 400);
 
@@ -198,26 +315,6 @@ async function patchMessage(request: Request, env: Env, id: string): Promise<Res
   await env.DB.prepare(`UPDATE messages SET ${updates.join(", ")} WHERE id = ?`)
     .bind(...values)
     .run();
-  return json({ ok: true });
-}
-
-/**
- * Removes the row and the stored message together. There is no trash folder:
- * the point of this project is that the mail lives in your own bucket, so a
- * delete that left 20 MB of orphaned .eml behind would be a lie.
- */
-async function deleteMessage(env: Env, id: string): Promise<Response> {
-  const row = await env.DB.prepare(`SELECT r2_key FROM messages WHERE id = ? LIMIT 1`)
-    .bind(id)
-    .first<{ r2_key: string }>();
-  if (!row) return json({ error: "not found" }, 404);
-
-  await env.RAW.delete(row.r2_key);
-  await env.DB.batch([
-    env.DB.prepare(`DELETE FROM messages WHERE id = ?`).bind(id),
-    env.DB.prepare(`INSERT OR REPLACE INTO tombstones (id, deleted_ms) VALUES (?, ?)`)
-      .bind(id, Date.now()),
-  ]);
   return json({ ok: true });
 }
 
@@ -235,18 +332,22 @@ async function listMessages(env: Env, url: URL): Promise<Response> {
   const query = (url.searchParams.get("q") ?? "").trim();
   const like = `%${query}%`;
 
+  // Full text via FTS5 over subject, sender and body. Search spans every
+  // folder except trash — looking for something you can't place is exactly
+  // when you don't know which folder it's in, but you didn't mean the bin.
   const statement = query
     ? env.DB.prepare(
         `${SELECT_COLUMNS}
-          WHERE received_ms < ?
-            AND (subject LIKE ? OR envelope_from LIKE ? OR header_from LIKE ?)
-          ORDER BY received_ms DESC
+          WHERE m.received_ms < ?
+            AND m.folder != 'trash'
+            AND m.id IN (SELECT id FROM messages_fts WHERE messages_fts MATCH ?)
+          ORDER BY m.received_ms DESC
           LIMIT ?`,
-      ).bind(cursor, like, like, like, PAGE_SIZE)
+      ).bind(cursor, ftsQuery(query), PAGE_SIZE)
     : env.DB.prepare(
         `${SELECT_COLUMNS}
-          WHERE folder = ? AND received_ms < ?
-          ORDER BY received_ms DESC
+          WHERE m.folder = ? AND m.received_ms < ?
+          ORDER BY m.received_ms DESC
           LIMIT ?`,
       ).bind(folder, cursor, PAGE_SIZE);
 
@@ -315,7 +416,20 @@ async function backfill(env: Env): Promise<Response> {
   }
 }
 
+/** Every address you're permitted to send as, default first. */
+function identities(env: Env): string[] {
+  const domain = env.MAIL_DOMAIN;
+  const listed = (env.SEND_ADDRESSES ?? "")
+    .split(",")
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean)
+    .map((part) => (part.includes("@") ? part : `${part}@${domain}`));
+  const all = [env.SEND_FROM, ...listed].filter(Boolean);
+  return [...new Set(all)];
+}
+
 interface SendRequest {
+  from?: string;
   to?: string[];
   subject?: string;
   text?: string;
@@ -350,7 +464,15 @@ async function sendMessage(request: Request, env: Env): Promise<Response> {
     return json({ error: (err as Error).message }, 501);
   }
 
-  const from = env.SEND_NAME ? `${env.SEND_NAME} <${env.SEND_FROM}>` : env.SEND_FROM;
+  // The From must be one we allow. Trusting the client here would turn this
+  // endpoint into a way to send mail as any address on the domain.
+  const allowed = identities(env);
+  const requested = (body.from ?? "").trim().toLowerCase();
+  const address = requested && allowed.includes(requested) ? requested : env.SEND_FROM;
+  if (requested && !allowed.includes(requested)) {
+    return json({ error: `Not permitted to send as ${requested}` }, 403);
+  }
+  const from = env.SEND_NAME ? `${env.SEND_NAME} <${address}>` : address;
 
   // References accumulates the whole chain; In-Reply-To names only the parent.
   const references = [body.references, body.inReplyTo].filter(Boolean).join(" ").trim();
@@ -377,6 +499,7 @@ async function sendMessage(request: Request, env: Env): Promise<Response> {
     await storeSentCopy(env, {
       to,
       from,
+      address,
       subject: subject || "(no subject)",
       text,
       messageId: result.messageId ? `<${result.messageId}@resend>` : null,
@@ -397,7 +520,7 @@ async function sendMessage(request: Request, env: Env): Promise<Response> {
 async function storeSentCopy(
   env: Env,
   m: {
-    to: string[]; from: string; subject: string; text: string;
+    to: string[]; from: string; address: string; subject: string; text: string;
     messageId: string | null; inReplyTo: string | null;
     references: string | null; threadId: string | null;
   },
@@ -438,7 +561,7 @@ async function storeSentCopy(
     .bind(
       id, r2Key, m.messageId, m.inReplyTo, m.references,
       m.threadId ?? m.messageId ?? id,
-      env.SEND_FROM, m.to.join(", "), m.from, m.subject,
+      m.address, m.to.join(", "), m.from, m.subject,
       now, now, eml.length,
     )
     .run();

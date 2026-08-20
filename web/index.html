@@ -25,7 +25,7 @@
 
   <button id="new" class="compose-btn">
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-    Compose
+    <span class="compose-btn-label">Compose</span>
   </button>
 
   <nav class="folders">
@@ -40,6 +40,10 @@
     <button data-folder="sent">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M14 2 2 7.2l4.6 1.6M14 2 9.4 14l-1.6-4.6M14 2 6.6 8.8" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/></svg>
       <span>Sent</span><em data-count="sent"></em>
+    </button>
+    <button data-folder="trash">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5 5 13a1 1 0 0 0 1 .9h4a1 1 0 0 0 1-.9l.5-8.5M6.8 7v4M9.2 7v4" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Trash</span><em data-count="trash"></em>
     </button>
     <button data-folder="events">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h3l2-4.5L9 12l2-4h3" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -109,6 +113,7 @@
         <div class="bulk-actions">
           <button id="bulk-read" class="quiet">Mark read</button>
           <button id="bulk-unread" class="quiet">Mark unread</button>
+          <button id="bulk-restore" class="quiet hidden">Restore</button>
           <button id="bulk-delete" class="quiet danger">Delete</button>
         </div>
       </div>
@@ -130,6 +135,7 @@
           <h2>New message</h2>
           <button type="button" id="c-cancel" class="quiet">Close</button>
         </div>
+        <label><span>From</span><select id="c-from"></select></label>
         <label><span>To</span><input id="c-to" type="text" autocomplete="off" required placeholder="name@example.com"></label>
         <label><span>Subject</span><input id="c-subject" type="text" autocomplete="off" placeholder="Subject"></label>
         <textarea id="c-body" placeholder="Write your message…" required></textarea>
@@ -139,11 +145,13 @@
         </div>
       </form>
 
+      <div id="thread" class="thread hidden"></div>
       <article id="reader" class="hidden">
         <div class="reader-head">
           <h2 id="subject"></h2>
           <div class="reader-actions">
             <button id="reply" class="quiet">Reply</button>
+            <button id="restore" class="quiet hidden">Restore</button>
             <button id="toggle-remote" class="quiet">Load images</button>
             <button id="toggle-source" class="quiet">Plain text</button>
             <a id="download" class="quiet" download>Download</a>

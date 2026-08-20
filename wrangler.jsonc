@@ -38,7 +38,12 @@
 
     // Outbound identity. RESEND_API_KEY is a secret, not a var.
     "SEND_FROM": "hi@amirsalmani.com",
-    "SEND_NAME": "Amir Salmani"
+    "SEND_NAME": "Amir Salmani",
+
+    // Addresses the From picker offers, beyond SEND_FROM. Local-parts only —
+    // the domain is always MAIL_DOMAIN, and the server rejects anything not
+    // on this list rather than trusting the client's From.
+    "SEND_ADDRESSES": "amir,contact,jobs"
   },
 
   // Served by Cloudflare before the Worker runs, so page loads cost nothing

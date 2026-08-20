@@ -18,13 +18,19 @@ export interface Env {
   SEND_FROM: string;
   /** Display name on outbound mail. */
   SEND_NAME: string;
+  /**
+   * Addresses you may send as, comma-separated local-parts. The domain is
+   * always MAIL_DOMAIN — an arbitrary From would let anyone who reached this
+   * API send mail as anybody.
+   */
+  SEND_ADDRESSES: string;
   /** Resend API key. Needs full access: sending, and reading received mail. */
   RESEND_API_KEY?: string;
   /** Svix signing secret for the Resend inbound webhook. */
   RESEND_WEBHOOK_SECRET?: string;
 }
 
-export type Folder = "inbox" | "quarantine" | "sent";
+export type Folder = "inbox" | "quarantine" | "sent" | "trash";
 
 export interface AuthVerdict {
   spf: string | null;

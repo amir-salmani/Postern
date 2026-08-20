@@ -133,6 +133,20 @@ export async function ingest(env: Env, emailId: string, meta: Record<string, unk
   // pointing at nothing.
   await env.RAW.put(r2Key, eml, { httpMetadata: { contentType: "message/rfc822" } });
 
+  // Full text goes into FTS at ingest, where the body is already a decoded
+  // string. Indexing later would mean re-fetching from R2 and parsing MIME,
+  // which is exactly the server-side CPU this design avoids.
+  await env.DB.prepare(
+    `INSERT INTO messages_fts (id, subject, sender, body) VALUES (?, ?, ?, ?)`,
+  )
+    .bind(
+      emailId,
+      email.subject ?? headers["subject"] ?? "",
+      `${headers["from"] ?? ""} ${envelopeFrom}`,
+      (email.text || stripTags(email.html || "")).slice(0, 100_000),
+    )
+    .run();
+
   const inReplyTo = headers["in-reply-to"] ?? null;
   const refs = headers["references"] ?? null;
   const threadId = await resolveThread(env, messageId, inReplyTo, emailId);
@@ -158,6 +172,75 @@ export async function ingest(env: Env, emailId: string, meta: Record<string, unk
       (headers["content-type"] ?? "").toLowerCase().includes("multipart/mixed") ? 1 : 0,
     )
     .run();
+
+  // Attachments arrive by reference, not by value — Resend keeps webhook
+  // payloads small so they fit in serverless request limits. Fetch them
+  // separately and put them in our own bucket, or "your mail lives in your
+  // own storage" would only be true of the text.
+  await storeAttachments(env, emailId, receivedMs);
+}
+
+async function storeAttachments(env: Env, emailId: string, receivedMs: number): Promise<void> {
+  const response = await fetch(
+    `https://api.resend.com/emails/receiving/${emailId}/attachments`,
+    { headers: { Authorization: `Bearer ${env.RESEND_API_KEY}` } },
+  );
+  if (!response.ok) {
+    if (response.status !== 404) {
+      console.error(`postern: attachment list returned ${response.status} for ${emailId}`);
+    }
+    return;
+  }
+
+  const list = (await response.json()) as {
+    data?: Array<{ id?: string; filename?: string; content_type?: string; size?: number; download_url?: string }>;
+  };
+  const attachments = list.data ?? [];
+  if (!attachments.length) return;
+
+  const date = new Date(receivedMs);
+  const prefix = `${date.getUTCFullYear()}/${String(date.getUTCMonth() + 1).padStart(2, "0")}/att`;
+
+  for (const item of attachments) {
+    if (!item.download_url) continue;
+    const id = item.id ?? crypto.randomUUID();
+    const key = `${prefix}/${emailId}/${id}`;
+
+    try {
+      const file = await fetch(item.download_url);
+      if (!file.ok || !file.body) throw new Error(`download returned ${file.status}`);
+
+      // Streamed straight through: bytes never become a JS string, so a large
+      // attachment costs I/O rather than CPU.
+      await env.RAW.put(key, file.body, {
+        httpMetadata: {
+          contentType: item.content_type || "application/octet-stream",
+          contentDisposition: `attachment; filename="${(item.filename || "attachment").replace(/"/g, "")}"`,
+        },
+      });
+
+      await env.DB.prepare(
+        `INSERT OR REPLACE INTO attachments (id, message_id, filename, content_type, size_bytes, r2_key)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(id, emailId, item.filename ?? "attachment", item.content_type ?? null, item.size ?? null, key)
+        .run();
+    } catch (err) {
+      console.error("postern: attachment store failed", emailId, id, err);
+    }
+  }
+
+  await env.DB.prepare(`UPDATE messages SET has_attach = 1 WHERE id = ?`).bind(emailId).run();
+}
+
+/** Cheap tag strip so HTML-only mail still contributes words to the index. */
+function stripTags(html: string): string {
+  return html
+    .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&(nbsp|amp|lt|gt|quot|#39);/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normaliseHeaders(

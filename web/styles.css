@@ -417,6 +417,17 @@ main { display: grid; grid-template-rows: auto 1fr; min-width: 0; min-height: 0;
   color: var(--ink-3);
 }
 
+.compose select {
+  flex: 1;
+  padding: 10px 0;
+  border: 0;
+  background: none;
+  outline: none;
+  cursor: pointer;
+}
+
+.compose select option { background: var(--raised-2); color: var(--ink); }
+
 .compose input {
   flex: 1;
   padding: 11px 0;
@@ -470,9 +481,19 @@ main { display: grid; grid-template-rows: auto 1fr; min-width: 0; min-height: 0;
 /* ───────── Responsive & motion ───────── */
 
 @media (max-width: 900px) {
-  body { grid-template-columns: 64px 1fr; }
-  .brand span, .folders button span, .folders em, .sidebar-foot { display: none; }
-  .compose-btn { padding: 9px; }
+  body { grid-template-columns: 60px 1fr; }
+  .brand span, .folders button span, .folders em, .foot-label { display: none; }
+  .sidebar { padding: 12px 8px; align-items: center; }
+  .brand { padding: 4px 0 12px; }
+  .folders { width: 100%; }
+  .folders button { justify-content: center; padding: 9px 0; }
+  .sidebar-foot { width: 100%; justify-content: center; padding-top: 12px; }
+
+  /* The label has nowhere to go at this width, so the button becomes its icon
+     rather than overflowing its own box. */
+  .compose-btn { width: 44px; height: 44px; padding: 0; border-radius: 14px; align-self: center; }
+  .compose-btn svg { width: 18px; height: 18px; }
+  .compose-btn-label { display: none; }
   .panes { grid-template-columns: 1fr; }
   .reader { display: none; }
   body.reading .list { display: none; }
@@ -733,3 +754,67 @@ body.selecting .list li .avatar { display: none; }
 
 #sync[aria-busy="true"] svg { animation: spin 900ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg) } }
+
+/* ───────── Threads & attachments ───────── */
+
+.thread-count {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--line-2);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-2);
+}
+
+.thread { overflow-y: auto; padding: 0 0 18px; }
+
+.thread-item { border-bottom: 1px solid var(--line); }
+.thread-item:last-child { border-bottom: 0; }
+
+.thread-item > button {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 12px 22px;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.thread-item > button:hover { background: var(--line); }
+.thread-item .who { font-weight: 550; }
+.thread-item .snippet { color: var(--ink-3); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-item time { margin-left: auto; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+.thread-item .col { min-width: 0; flex: 1; display: grid; }
+.thread-item iframe { width: 100%; border: 0; background: transparent; }
+.thread-item.open > button { background: var(--line); }
+
+.attachments a {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 11px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+  transition: border-color var(--fast), background var(--fast);
+}
+
+.attachments a:hover { border-color: var(--accent); background: var(--line); }
+.attachments a svg { width: 14px; height: 14px; opacity: .7; flex: none; }
+.attachments .size { color: var(--ink-3); }
+
+.trash-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 9px 12px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-size: 12.5px;
+  color: var(--ink-2);
+}

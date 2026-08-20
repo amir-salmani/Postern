@@ -26,10 +26,11 @@ const state = {
   showSource: false,
   compose: null,
   picked: new Set(),
+  identities: [],
 };
 
 const el = (id) => document.getElementById(id);
-const TITLES = { inbox: "Inbox", quarantine: "Quarantine", sent: "Sent", events: "Dashboard" };
+const TITLES = { inbox: "Inbox", quarantine: "Quarantine", sent: "Sent", trash: "Trash", events: "Dashboard" };
 
 /**
  * Two series, fixed order, never cycled. Validated with the palette checker
@@ -77,9 +78,13 @@ async function loadFolder(folder, { append = false } = {}) {
     state.picked.clear();
     renderBulkBar();
     el("messages").replaceChildren();
+    document.querySelectorAll(".trash-note").forEach((n) => n.remove());
     clearReader();
   }
   el("view-title").textContent = state.query ? "Search" : TITLES[state.folder];
+  const inTrash = state.folder === "trash";
+  el("bulk-restore").classList.toggle("hidden", !inTrash);
+  el("bulk-delete").textContent = inTrash ? "Delete forever" : "Delete";
   el("list-status").textContent = "Loading…";
 
   const query = new URLSearchParams({ folder: state.folder });
@@ -91,6 +96,12 @@ async function loadFolder(folder, { append = false } = {}) {
     state.messages.push(...data.messages);
     state.cursor = data.nextCursor;
     renderList(data.messages);
+    if (state.folder === "trash" && !append && data.messages.length) {
+      const note = document.createElement("div");
+      note.className = "trash-note";
+      note.textContent = "Messages here are deleted for good 30 days after you trashed them.";
+      el("messages").before(note);
+    }
     el("more").classList.toggle("hidden", !data.nextCursor);
     el("list-status").textContent = state.messages.length
       ? ""
@@ -117,6 +128,13 @@ function renderList(messages) {
       span("subject", message.subject || "(no subject)"),
       span("preview", message.envelope_to || ""),
     );
+
+    if (message.thread_count > 1) {
+      const count = document.createElement("span");
+      count.className = "thread-count";
+      count.textContent = message.thread_count;
+      item.querySelector(".from").append(count);
+    }
 
     const when = document.createElement("time");
     when.className = "when";
@@ -251,11 +269,15 @@ async function openMessage(message) {
     li.classList.toggle("selected", li.dataset.id === message.id);
   });
 
+  el("restore").classList.toggle("hidden", message.folder !== "trash");
+  el("reply").classList.toggle("hidden", message.folder === "trash");
+  renderThread(message);
+
   try {
     const raw = await (await api(`/messages/${message.id}/raw`)).arrayBuffer();
     state.parsed = await PostalMime.parse(raw);
     renderBody();
-    renderAttachments();
+    await renderAttachments(message);
   } catch (err) {
     el("body").srcdoc = `<!doctype html><meta charset="utf-8"><pre>${escapeHtml(err.message)}</pre>`;
     return;
@@ -277,15 +299,22 @@ function renderBody() {
   const parsed = state.parsed;
   if (!parsed) return;
 
-  const useHtml = !state.showSource && parsed.html;
-  const imgSrc = state.allowRemote ? "data: https:" : "data:";
+  el("body").srcdoc = bodyDocument(parsed, state);
+  el("toggle-source").textContent = !state.showSource && parsed.html ? "Plain text" : "HTML";
+  el("toggle-source").classList.toggle("hidden", !parsed.html);
+  el("toggle-remote").classList.toggle("hidden", !(!state.showSource && parsed.html) || state.allowRemote);
+}
+
+function bodyDocument(parsed, { allowRemote, showSource }) {
+  const useHtml = !showSource && parsed.html;
+  const imgSrc = allowRemote ? "data: https:" : "data:";
   const csp = `default-src 'none'; style-src 'unsafe-inline'; img-src ${imgSrc};`;
   const content = useHtml ? parsed.html : `<pre>${escapeHtml(parsed.text || "(no text part)")}</pre>`;
   const dark = !document.documentElement.dataset.theme
     ? matchMedia("(prefers-color-scheme: dark)").matches
     : document.documentElement.dataset.theme === "dark";
 
-  el("body").srcdoc = `<!doctype html><html><head>
+  return `<!doctype html><html><head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <base target="_blank">
@@ -303,28 +332,118 @@ function renderBody() {
   pre { white-space: pre-wrap; font: 13px/1.7 ui-monospace, monospace; margin: 0; }
   blockquote { margin: 0 0 0 12px; padding-left: 12px; border-left: 2px solid currentColor; opacity: .6; }
 </style></head><body>${content}</body></html>`;
-
-  el("toggle-source").textContent = useHtml ? "Plain text" : "HTML";
-  el("toggle-source").classList.toggle("hidden", !parsed.html);
-  el("toggle-remote").classList.toggle("hidden", !useHtml || state.allowRemote);
 }
 
-function renderAttachments() {
+/**
+ * Two sources. Inline parts come from the parsed MIME in this browser;
+ * detached ones were fetched from Resend at ingest and live in R2, so they
+ * are served by id rather than rebuilt here.
+ */
+async function renderAttachments(message) {
   const container = el("attachments");
   container.replaceChildren();
-  const attachments = state.parsed?.attachments ?? [];
-  container.classList.toggle("hidden", attachments.length === 0);
 
-  for (const attachment of attachments) {
+  const items = [];
+  for (const attachment of state.parsed?.attachments ?? []) {
     const blob = new Blob([attachment.content], {
       type: attachment.mimeType || "application/octet-stream",
     });
+    items.push({
+      name: attachment.filename || "attachment",
+      size: blob.size,
+      href: URL.createObjectURL(blob),
+    });
+  }
+
+  if (message.has_attach) {
+    try {
+      const { attachments } = await (await api(`/messages/${message.id}/attachments`)).json();
+      for (const a of attachments ?? []) {
+        if (items.some((i) => i.name === a.filename)) continue;
+        items.push({
+          name: a.filename || "attachment",
+          size: a.size_bytes,
+          href: `/api/messages/${message.id}/attachments/${a.id}`,
+        });
+      }
+    } catch { /* inline parts still render */ }
+  }
+
+  container.classList.toggle("hidden", items.length === 0);
+  for (const item of items) {
     const link = document.createElement("a");
-    link.className = "quiet";
-    link.href = URL.createObjectURL(blob);
-    link.download = attachment.filename || "attachment";
-    link.textContent = `${attachment.filename || "attachment"} · ${formatBytes(blob.size)}`;
+    link.href = item.href;
+    link.download = item.name;
+    link.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 5 5.9 9.6a1.6 1.6 0 0 0 2.3 2.3l4.8-4.8a3 3 0 0 0-4.3-4.3L3.6 7.9a4.4 4.4 0 0 0 6.2 6.2l4.2-4.2"/></svg>';
+    link.append(document.createTextNode(item.name));
+    if (item.size) {
+      const size = document.createElement("span");
+      size.className = "size";
+      size.textContent = formatBytes(item.size);
+      link.append(size);
+    }
     container.append(link);
+  }
+}
+
+/**
+ * A conversation reads downward. Earlier messages collapse to one line and
+ * expand in place, so the thread is scannable without losing the message you
+ * actually opened.
+ */
+async function renderThread(message) {
+  const host = el("thread");
+  host.replaceChildren();
+  host.classList.add("hidden");
+  if (!message.thread_id || (message.thread_count ?? 1) < 2) return;
+
+  let messages;
+  try {
+    ({ messages } = await (await api(`/threads/${encodeURIComponent(message.thread_id)}`)).json());
+  } catch { return; }
+  if (!messages || messages.length < 2) return;
+
+  host.classList.remove("hidden");
+  for (const item of messages) {
+    if (item.id === message.id) continue;
+    const wrap = document.createElement("div");
+    wrap.className = "thread-item";
+
+    const head = document.createElement("button");
+    head.type = "button";
+    const name = displayFrom(item);
+    head.append(avatarFor(name));
+    const col = document.createElement("div");
+    col.className = "col";
+    col.append(span("who", name), span("snippet", item.subject || "(no subject)"));
+    const when = document.createElement("time");
+    when.textContent = shortDate(item.received_ms);
+    head.append(col, when);
+
+    let frame = null;
+    head.addEventListener("click", async () => {
+      if (frame) {
+        frame.remove(); frame = null;
+        wrap.classList.remove("open");
+        return;
+      }
+      wrap.classList.add("open");
+      frame = document.createElement("iframe");
+      frame.setAttribute("sandbox", "");
+      frame.setAttribute("referrerpolicy", "no-referrer");
+      frame.style.height = "320px";
+      wrap.append(frame);
+      try {
+        const raw = await (await api(`/messages/${item.id}/raw`)).arrayBuffer();
+        const parsed = await PostalMime.parse(raw);
+        frame.srcdoc = bodyDocument(parsed, { allowRemote: false, showSource: false });
+      } catch (err) {
+        frame.srcdoc = `<!doctype html><meta charset="utf-8"><pre>${escapeHtml(err.message)}</pre>`;
+      }
+    });
+
+    wrap.append(head);
+    host.append(wrap);
   }
 }
 
@@ -333,6 +452,7 @@ function clearReader() {
   state.parsed = null;
   document.body.classList.remove("reading");
   el("reader").classList.add("hidden");
+  el("thread").classList.add("hidden");
   el("compose").classList.add("hidden");
   el("reader-empty").classList.remove("hidden");
 }
@@ -591,8 +711,25 @@ function renderEventLog(events) {
 
 /* ───────── Compose ───────── */
 
-function openCompose({ to = "", subject = "", inReplyTo = null, references = null, threadId = null } = {}) {
+async function loadIdentities() {
+  try {
+    const { identities } = await (await api("/identities")).json();
+    state.identities = identities ?? [];
+    el("c-from").replaceChildren(...state.identities.map((address) => {
+      const option = document.createElement("option");
+      option.value = address;
+      option.textContent = address;
+      return option;
+    }));
+  } catch { /* the picker just stays empty; the server still defaults */ }
+}
+
+function openCompose({ to = "", subject = "", inReplyTo = null, references = null, threadId = null, from = null } = {}) {
   state.compose = { inReplyTo, references, threadId };
+  // Reply from the address it was addressed to, when that's one of ours —
+  // answering a message sent to jobs@ from hi@ is a small betrayal of the alias.
+  if (from && state.identities.includes(from.toLowerCase())) el("c-from").value = from.toLowerCase();
+  else if (state.identities.length) el("c-from").value = state.identities[0];
   el("c-to").value = to;
   el("c-subject").value = subject;
   el("c-body").value = "";
@@ -617,6 +754,7 @@ function closeCompose() {
  */
 function replyTo(message) {
   openCompose({
+    from: (message.envelope_to || "").toLowerCase(),
     to: addressOf(message.header_from) || message.envelope_from,
     subject: /^re:/i.test(message.subject || "") ? message.subject : `Re: ${message.subject || ""}`,
     inReplyTo: message.message_id || null,
@@ -636,6 +774,7 @@ async function submitCompose(event) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        from: el("c-from").value || null,
         to: el("c-to").value.split(",").map((s) => s.trim()).filter(Boolean),
         subject: el("c-subject").value,
         text: el("c-body").value,
@@ -759,13 +898,17 @@ el("toggle-source").addEventListener("click", () => { state.showSource = !state.
 el("delete").addEventListener("click", async () => {
   const message = state.selected;
   if (!message) return;
+  const permanent = message.folder === "trash";
   const ok = await confirmDialog({
-    title: "Delete this message?",
-    text: "The stored copy is removed from your R2 bucket, and it won't come back on the next fetch.",
+    title: permanent ? "Delete forever?" : "Move to Trash?",
+    text: permanent
+      ? "The message and its attachments are removed from your R2 bucket. This cannot be undone."
+      : "It stays recoverable in Trash for 30 days, then is deleted for good.",
+    action: permanent ? "Delete forever" : "Move to Trash",
   });
   if (!ok) return;
   try {
-    await api(`/messages/${message.id}`, { method: "DELETE" });
+    await api(`/messages/${message.id}${permanent ? "?purge=1" : ""}`, { method: "DELETE" });
     document.querySelector(`#messages li[data-id="${message.id}"]`)?.remove();
     state.messages = state.messages.filter((m) => m.id !== message.id);
     clearReader();
@@ -787,19 +930,40 @@ el("select-all").addEventListener("change", (e) => {
   renderBulkBar();
 });
 
+el("restore").addEventListener("click", async () => {
+  const message = state.selected;
+  if (!message) return;
+  await api(`/messages/${message.id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folder: "inbox" }),
+  });
+  clearReader();
+  await loadFolder(state.folder);
+  loadCounts();
+});
+
+el("bulk-restore").addEventListener("click", () => bulkPatch({ folder: "inbox" }));
 el("bulk-read").addEventListener("click", () => bulkPatch({ seen: true }));
 el("bulk-unread").addEventListener("click", () => bulkPatch({ seen: false }));
 
 el("bulk-delete").addEventListener("click", async () => {
   const count = state.picked.size;
   if (!count) return;
+  const permanent = state.folder === "trash";
   const ok = await confirmDialog({
-    title: `Delete ${count} message${count === 1 ? "" : "s"}?`,
-    text: "The stored copies are removed from your R2 bucket, and they won't come back on the next fetch.",
+    title: permanent
+      ? `Delete ${count} message${count === 1 ? "" : "s"} forever?`
+      : `Move ${count} message${count === 1 ? "" : "s"} to Trash?`,
+    text: permanent
+      ? "They and their attachments are removed from your R2 bucket. This cannot be undone."
+      : "They stay recoverable in Trash for 30 days, then are deleted for good.",
+    action: permanent ? "Delete forever" : "Move to Trash",
   });
   if (!ok) return;
   const ids = [...state.picked];
-  await Promise.all(ids.map((id) => api(`/messages/${id}`, { method: "DELETE" }).catch(() => {})));
+  await Promise.all(ids.map((id) =>
+    api(`/messages/${id}${permanent ? "?purge=1" : ""}`, { method: "DELETE" }).catch(() => {})));
   clearSelection();
   clearReader();
   await loadFolder(state.folder);
@@ -934,3 +1098,4 @@ document.addEventListener("keydown", (e) => {
 
 loadFolder("inbox");
 loadCounts();
+loadIdentities();
