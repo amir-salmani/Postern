@@ -1,10 +1,11 @@
 -- Postern — D1 schema, Phase 1 (ingest only).
 --
--- Design note: no message body lives here. The handler never parses MIME,
--- because Workers Free allows 10ms CPU per invocation and parsing a
--- multi-megabyte message blows straight through it. The raw .eml goes to R2
--- and is parsed in the browser. Everything below comes from headers that
--- Cloudflare has already parsed for us, so ingest stays near-zero CPU.
+-- Design note: no message body lives here. The raw .eml goes to R2 and is
+-- parsed in the browser, because Workers Free allows 10ms CPU per invocation
+-- and parsing a multi-megabyte message would blow straight through it.
+--
+-- `id` is the Resend email id, so a retried webhook collides on the primary
+-- key and is ignored rather than storing the same message twice.
 
 CREATE TABLE IF NOT EXISTS messages (
   id            TEXT PRIMARY KEY,   -- uuid, also the R2 object name
@@ -54,3 +55,19 @@ CREATE INDEX IF NOT EXISTS idx_messages_message_id
 
 -- Phase 4 will add an FTS5 table over subject + sender + extracted body text,
 -- populated lazily on first open rather than at ingest.
+
+-- Every webhook Resend sends, not just inbound mail. The endpoint is
+-- subscribed to all event types, so this is where delivery, bounce, open and
+-- complaint events for outbound mail end up — otherwise they'd be
+-- acknowledged and thrown away.
+CREATE TABLE IF NOT EXISTS events (
+  id         TEXT PRIMARY KEY,   -- svix message id; makes retries idempotent
+  type       TEXT NOT NULL,
+  email_id   TEXT,
+  created_ms INTEGER NOT NULL,
+  summary    TEXT,               -- human-readable one-liner for the UI
+  payload    TEXT NOT NULL       -- full event JSON, for anything not modelled
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_created ON events (created_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_events_email   ON events (email_id);

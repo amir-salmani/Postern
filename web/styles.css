@@ -136,6 +136,8 @@ main {
 }
 
 .list li:hover { background: var(--surface-alt); }
+.list li.event { cursor: default; }
+.list li.event .from { font-family: var(--mono); font-size: 0.78rem; }
 .list li.selected { background: var(--surface-alt); box-shadow: inset 3px 0 0 var(--ink); }
 
 .from { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

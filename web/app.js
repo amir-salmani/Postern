@@ -37,7 +37,48 @@ async function api(path, options) {
   return response;
 }
 
+/**
+ * Every webhook Resend has sent us. Delivery, bounce, open and complaint
+ * events are the only feedback there is on outbound mail, so they get their
+ * own view rather than being invisible in the database.
+ */
+async function loadEvents() {
+  state.folder = "events";
+  el("messages").replaceChildren();
+  el("more").classList.add("hidden");
+  clearReader();
+  el("list-status").textContent = "Loading…";
+
+  try {
+    const data = await (await api("/events")).json();
+    const list = el("messages");
+    for (const event of data.events) {
+      const item = document.createElement("li");
+      item.classList.add("event");
+
+      const type = document.createElement("span");
+      type.className = "from";
+      type.textContent = event.type;
+
+      const summary = document.createElement("span");
+      summary.className = "subject";
+      summary.textContent = event.summary || event.email_id || "";
+
+      const when = document.createElement("time");
+      when.className = "when mono";
+      when.textContent = shortDate(event.created_ms);
+
+      item.append(type, summary, when);
+      list.append(item);
+    }
+    el("list-status").textContent = data.events.length ? "" : "No events yet.";
+  } catch (err) {
+    el("list-status").textContent = err.message;
+  }
+}
+
 async function loadFolder(folder, { append = false } = {}) {
+  if (folder === "events") return loadEvents();
   if (!append) {
     state.folder = folder;
     state.cursor = null;
@@ -310,6 +351,25 @@ document.querySelectorAll(".folders button").forEach((button) => {
 
 el("refresh").addEventListener("click", () => loadFolder(state.folder));
 el("new").addEventListener("click", () => openCompose());
+
+// Resend holds received mail whether or not the webhook succeeded, so this
+// recovers anything that arrived while the endpoint was unreachable.
+el("sync").addEventListener("click", async () => {
+  const button = el("sync");
+  button.disabled = true;
+  el("list-status").textContent = "Syncing from Resend…";
+  try {
+    const result = await (await api("/backfill", { method: "POST" })).json();
+    el("list-status").textContent =
+      `Imported ${result.imported}, already had ${result.skipped}` +
+      (result.failed?.length ? `, ${result.failed.length} failed` : "");
+    if (result.imported) await loadFolder(state.folder);
+  } catch (err) {
+    el("list-status").textContent = err.message;
+  } finally {
+    button.disabled = false;
+  }
+});
 el("reply").addEventListener("click", () => state.selected && replyTo(state.selected));
 el("c-cancel").addEventListener("click", closeCompose);
 el("compose").addEventListener("submit", submitCompose);

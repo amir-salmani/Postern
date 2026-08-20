@@ -1,4 +1,5 @@
 import { verifyAccess } from "./access";
+import { ingest } from "./inbound";
 import { getSender } from "./senders";
 import type { Env, Folder } from "./types";
 
@@ -21,6 +22,14 @@ export async function handleApi(request: Request, env: Env, url: URL): Promise<R
 
   if (segments[0] === "messages" && segments.length === 1 && request.method === "GET") {
     return listMessages(env, url);
+  }
+
+  if (segments[0] === "events" && request.method === "GET") {
+    return listEvents(env, url);
+  }
+
+  if (segments[0] === "backfill" && request.method === "POST") {
+    return backfill(env);
   }
 
   if (segments[0] === "send" && request.method === "POST") {
@@ -93,6 +102,65 @@ async function rawMessage(env: Env, id: string): Promise<Response> {
 async function markSeen(env: Env, id: string): Promise<Response> {
   await env.DB.prepare(`UPDATE messages SET seen = 1 WHERE id = ?`).bind(id).run();
   return json({ ok: true });
+}
+
+async function listEvents(env: Env, url: URL): Promise<Response> {
+  const before = Number(url.searchParams.get("before"));
+  const cursor = Number.isFinite(before) && before > 0 ? before : Number.MAX_SAFE_INTEGER;
+
+  const { results } = await env.DB.prepare(
+    `SELECT id, type, email_id, created_ms, summary
+       FROM events
+      WHERE created_ms < ?
+      ORDER BY created_ms DESC
+      LIMIT ?`,
+  )
+    .bind(cursor, PAGE_SIZE)
+    .all();
+
+  return json({ events: results ?? [] });
+}
+
+/**
+ * Pull anything Resend is holding that we never stored.
+ *
+ * Resend keeps received mail regardless of whether the webhook succeeded, so
+ * this is the recovery path for any window where the endpoint was down,
+ * unreachable, or — as happened here — sitting behind a login page.
+ */
+async function backfill(env: Env): Promise<Response> {
+  if (!env.RESEND_API_KEY) return json({ error: "RESEND_API_KEY is unset" }, 501);
+
+  const response = await fetch("https://api.resend.com/emails/receiving", {
+    headers: { Authorization: `Bearer ${env.RESEND_API_KEY}` },
+  });
+  if (!response.ok) {
+    return json({ error: `Resend returned ${response.status}` }, 502);
+  }
+
+  const list = (await response.json()) as { data?: Array<{ id: string }> };
+  let imported = 0;
+  let skipped = 0;
+  const failed: string[] = [];
+
+  for (const item of list.data ?? []) {
+    const existing = await env.DB.prepare(`SELECT id FROM messages WHERE id = ? LIMIT 1`)
+      .bind(item.id)
+      .first();
+    if (existing) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      await ingest(env, item.id);
+      imported += 1;
+    } catch (err) {
+      console.error("postern: backfill failed for", item.id, err);
+      failed.push(item.id);
+    }
+  }
+
+  return json({ ok: true, imported, skipped, failed });
 }
 
 interface SendRequest {

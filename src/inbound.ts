@@ -37,11 +37,17 @@ export async function handleInbound(request: Request, env: Env): Promise<Respons
     return json({ error: "invalid JSON" }, 400);
   }
 
-  // The webhook is subscribed to every event type. Anything that isn't an
-  // inbound message is acknowledged and dropped — returning an error would
-  // make Resend retry it forever.
+  // The webhook is subscribed to every event type. Record them all — bounce,
+  // delivered, opened and complaint events are the only feedback there is on
+  // outbound mail, and discarding them would throw that away.
+  await recordEvent(env, request.headers.get("svix-id"), event).catch((err) => {
+    console.error("postern: failed to record event", err);
+  });
+
+  // Anything that isn't an inbound message is acknowledged here. Returning an
+  // error would make Resend retry it forever.
   if (event.type !== "email.received") {
-    return json({ ok: true, ignored: event.type ?? "unknown" });
+    return json({ ok: true, recorded: event.type ?? "unknown" });
   }
 
   const emailId = typeof event.data?.email_id === "string" ? event.data.email_id : null;
@@ -59,6 +65,32 @@ export async function handleInbound(request: Request, env: Env): Promise<Respons
   return json({ ok: true });
 }
 
+async function recordEvent(
+  env: Env,
+  svixId: string | null,
+  event: { type?: string; created_at?: string; data?: Record<string, unknown> },
+): Promise<void> {
+  const data = event.data ?? {};
+  const emailId = typeof data.email_id === "string" ? data.email_id : null;
+  const subject = typeof data.subject === "string" ? data.subject : "";
+  const to = Array.isArray(data.to) ? data.to.join(", ") : String(data.to ?? "");
+  const from = typeof data.from === "string" ? data.from : "";
+
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO events (id, type, email_id, created_ms, summary, payload)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(
+      svixId ?? crypto.randomUUID(),
+      event.type ?? "unknown",
+      emailId,
+      Date.parse(event.created_at ?? "") || Date.now(),
+      [from && `from ${from}`, to && `to ${to}`, subject].filter(Boolean).join(" · "),
+      JSON.stringify(event),
+    )
+    .run();
+}
+
 interface ReceivedEmail {
   from?: string;
   to?: string[] | string;
@@ -69,7 +101,7 @@ interface ReceivedEmail {
   created_at?: string;
 }
 
-async function ingest(env: Env, emailId: string, meta: Record<string, unknown>): Promise<void> {
+export async function ingest(env: Env, emailId: string, meta: Record<string, unknown> = {}): Promise<void> {
   if (!env.RESEND_API_KEY) throw new Error("RESEND_API_KEY is unset");
 
   const response = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {

@@ -2,10 +2,10 @@
 
 Personal email on your own infrastructure. Bring a domain.
 
-Mail for your domain is received by Cloudflare Email Routing, stored in *your*
-D1 database and *your* R2 bucket, and read through a web UI you deploy to your
-own Cloudflare account. Outbound goes through a pluggable sender. No provider
-holds your mail, and nothing here costs money at personal volume.
+Mail for your domain is received by Resend, stored in *your* D1 database and
+*your* R2 bucket, and read through a web UI you deploy to your own Cloudflare
+account. Outbound goes through a pluggable sender. No provider holds your
+mail, and nothing here costs money at personal volume.
 
 **Status: Phase 2 — ingest and read.** No sending yet. Run it alongside your
 existing mailbox for a few weeks and prove it captures mail reliably before
@@ -14,31 +14,36 @@ anything depends on it.
 ## How it works
 
 ```
-sender ──► MX (Cloudflare Email Routing, free)
-             └─ catch-all rule ──► Worker: email()
-                   ├─ raw .eml ─────► R2   (10 GB free)
+sender ──► MX (Resend inbound, catch-all)
+             └─ email.received webhook ──► /api/inbound  ── Svix signature verified
+                   ├─ fetch body ◄── Resend Receiving API
+                   ├─ .eml ─────────► R2   (10 GB free)
                    ├─ header row ───► D1   (5 GB free)
-                   └─ forward() ────► your existing mailbox   ← the net
+                   └─ every other event ──► D1 events table
 
 browser ──► static assets (free, never touch the Worker)
              └─ /api/* ──► Worker: fetch()  ── Access JWT verified
-                              ├─ list ◄── D1
-                              └─ raw  ◄── R2 ──► parsed in the browser
+                              ├─ list   ◄── D1
+                              ├─ raw    ◄── R2 ──► parsed in the browser
+                              └─ send   ──► Resend
 ```
 
 Three constraints produced this shape, and it's worth knowing them before
 changing anything:
 
 **No MIME parsing on the server.** Workers Free allows 10 ms of CPU per
-invocation. Parsing a multi-megabyte message with attachments blows through
-that and the message is lost. So ingest stores the raw `.eml` untouched and
-reads only headers Cloudflare has already parsed. The browser does the
-parsing later, where CPU is free and plentiful.
+invocation, which a multi-megabyte message would exhaust. Resend delivers
+already-parsed content, and the raw `.eml` is reassembled and stored for the
+browser to render. Server CPU stays near zero regardless of message size.
 
-**The forward is permanent, not temporary.** Every message is also delivered
-to your existing mailbox. That keeps this project *additive* — a bug here
-can't cost you an email, and you keep a mobile client and a spam filter for
-free while you decide whether to trust it. Turn it off only when you're sure.
+**The webhook is not behind Access.** Resend cannot log in, so `/api/inbound`
+is routed before the Access check and authenticates itself by verifying the
+Svix HMAC over the raw body, rejecting anything unsigned or older than five
+minutes. It needs a **Bypass** policy scoped to that path — see Setup.
+
+**Nothing is lost if the webhook fails.** Resend stores received mail whether
+or not your endpoint answered, and retries. `POST /api/backfill` (the *Sync*
+button) pulls anything that was missed.
 
 **The catch-all is a quarantine, not an inbox.** Every address that has ever
 leaked from your domain is deliverable, so mail to unknown local-parts is
@@ -80,8 +85,7 @@ destination mailbox before trusting anything else in here.
 
 ## Setup
 
-Requires a domain on Cloudflare and a verified Email Routing destination
-address.
+Requires a domain on Cloudflare and a Resend account.
 
 ```bash
 npm install
@@ -91,24 +95,21 @@ npx wrangler d1 create postern           # put the id into wrangler.jsonc
 npx wrangler r2 bucket create postern-raw
 npm run schema
 
-# Config: set MAIL_DOMAIN and INBOX_ADDRESSES in wrangler.jsonc
+# Config: set MAIL_DOMAIN, INBOX_ADDRESSES and SEND_FROM in wrangler.jsonc
 npm run deploy
 
-# The safety net is a secret, not a var — it's a real mailbox address and
-# wrangler.jsonc is committed.
-npx wrangler secret put FORWARD_TO
+npx wrangler secret put RESEND_API_KEY       # needs full access, not send-only
+npx wrangler secret put RESEND_WEBHOOK_SECRET
+npx wrangler secret put FORWARD_TO           # optional: BCC of sent mail
 ```
 
-Start with a single test address rather than the catch-all, so a mistake
-can't touch your real mail:
+In Resend: verify your domain, enable **Receiving**, and add a webhook for
+`email.received` pointing at `https://mail.yourdomain.com/api/inbound`.
 
-```bash
-npx wrangler email routing rules create \
-  --name "postern test" --to postern-test@yourdomain.com --worker postern
-```
-
-Move the catch-all over only once you've confirmed a message both stored *and*
-forwarded.
+In Cloudflare Zero Trust, protect the app with Access — then add a **second**
+self-hosted application scoped to the path `api/inbound` with a single
+**Bypass / Everyone** policy. Access matches the most specific path first, so
+the webhook gets through while the rest of the UI stays gated.
 
 Then create a Cloudflare Access application for the hostname you deployed to,
 and copy its **Application Audience (AUD) tag** and your team domain into
@@ -134,9 +135,10 @@ npx wrangler d1 execute postern --remote \
 - **Phase 2 — read-only UI.** ✅ Behind Cloudflare Access, MIME parsed
   client-side with a vendored `postal-mime`. Static assets bypass the Worker,
   so page loads cost no quota. No polling — refresh on focus, throttled.
-- **Phase 3 — compose and reply.** Via `src/senders/`, Resend by default.
-  Must set `In-Reply-To` and `References`, and write a copy of every sent
-  message back to D1, or your own sent mail is invisible.
+- **Phase 3 — compose and reply.** ✅ Via `src/senders/`, Resend by default.
+  Sets `In-Reply-To` and `References`, and writes a copy of every sent message
+  back to D1 — Resend has no notion of your mailbox, so without that your own
+  sent mail exists nowhere you can read it.
 - **Phase 4 — search.** D1 FTS5 over subject, sender and body text, populated
   lazily on first open.
 - **Phase 5 — encryption at rest.** The browser already does the parsing, so
@@ -151,12 +153,13 @@ npx wrangler d1 execute postern --remote \
 | Worker invocations | 100k/day | inbound mail + UI opens |
 | D1 | 5 GB, 5M row reads/day | ~1 row per message |
 | R2 | 10 GB | years of `.eml` at personal volume |
-| Inbound message size | 25 MiB | Email Routing hard cap |
+| Resend free tier | 3,000/mo, 100/day | **shared between inbound and outbound** |
 
-The one way to blow this is a UI that polls for new mail. Don't build one —
-inbound mail and the UI share the same 100k/day, so polling can starve your
-own ingest. Push from the `email()` handler instead; that invocation is
-already happening.
+Two things to watch. A UI that polls for new mail would burn Worker
+invocations for nothing, which is why the client refreshes on focus and never
+on a timer. And Resend's free tier counts inbound *and* outbound against one
+100/day allowance — on a catch-all domain, a spam wave can consume the
+allowance your outgoing mail needs.
 
 ## Development
 
