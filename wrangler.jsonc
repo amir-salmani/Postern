@@ -6,9 +6,11 @@
   "compatibility_date": "2026-08-01",
   "observability": { "enabled": true },
 
-  // Hourly. The reminder itself checks the six-hour threshold — a cron that
-  // fired every six hours would delay a message by up to six more.
-  "triggers": { "crons": ["7 * * * *"] },
+  // Every 30 minutes: pull anything Resend holds that we missed, then check
+  // whether anything has gone unread for six hours. One cron does both, and
+  // it replaces browser polling entirely — 48 invocations a day, not 48 per
+  // open tab.
+  "triggers": { "crons": ["*/30 * * * *"] },
 
   // The real hostname. Access can only protect a zone you own, not
   // *.workers.dev — and workers_dev is off so this is the only way in.

@@ -1,10 +1,28 @@
+import { runBackfill } from "./backfill";
 import { getSender } from "./senders";
 import type { Env } from "./types";
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
 /**
- * Hourly cron: nudge about inbox mail that has sat unread for six hours.
+ * The scheduled run: fetch, then consider a nudge.
+ *
+ * One cron does both so the whole thing costs 48 invocations a day rather
+ * than two crons' worth. Fetching every 30 minutes means the mailbox is
+ * current without the browser polling for it.
+ */
+export async function handleScheduled(env: Env): Promise<void> {
+  try {
+    const result = await runBackfill(env);
+    if (result.imported) console.log(`postern: scheduled fetch imported ${result.imported}`);
+  } catch (err) {
+    console.error("postern: scheduled fetch failed", err);
+  }
+  await remindUnread(env);
+}
+
+/**
+ * Nudge about inbox mail that has sat unread for six hours.
  *
  * Each message is marked once it has been included in a reminder, so this
  * nags per message rather than per hour — an unread newsletter you're
@@ -14,7 +32,7 @@ const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
  * reminder shares its allowance with your real mail, so a chatty reminder
  * would consume the quota it exists to protect.
  */
-export async function handleScheduled(env: Env): Promise<void> {
+async function remindUnread(env: Env): Promise<void> {
   if (!env.FORWARD_TO) return;
 
   const cutoff = Date.now() - SIX_HOURS_MS;

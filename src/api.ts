@@ -1,5 +1,5 @@
 import { verifyAccess } from "./access";
-import { ingest } from "./inbound";
+import { runBackfill } from "./backfill";
 import { getSender } from "./senders";
 import type { Env, Folder } from "./types";
 
@@ -213,7 +213,11 @@ async function deleteMessage(env: Env, id: string): Promise<Response> {
   if (!row) return json({ error: "not found" }, 404);
 
   await env.RAW.delete(row.r2_key);
-  await env.DB.prepare(`DELETE FROM messages WHERE id = ?`).bind(id).run();
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM messages WHERE id = ?`).bind(id),
+    env.DB.prepare(`INSERT OR REPLACE INTO tombstones (id, deleted_ms) VALUES (?, ?)`)
+      .bind(id, Date.now()),
+  ]);
   return json({ ok: true });
 }
 
@@ -302,46 +306,13 @@ async function listEvents(env: Env, url: URL): Promise<Response> {
   return json({ events: results ?? [] });
 }
 
-/**
- * Pull anything Resend is holding that we never stored.
- *
- * Resend keeps received mail regardless of whether the webhook succeeded, so
- * this is the recovery path for any window where the endpoint was down,
- * unreachable, or — as happened here — sitting behind a login page.
- */
 async function backfill(env: Env): Promise<Response> {
   if (!env.RESEND_API_KEY) return json({ error: "RESEND_API_KEY is unset" }, 501);
-
-  const response = await fetch("https://api.resend.com/emails/receiving", {
-    headers: { Authorization: `Bearer ${env.RESEND_API_KEY}` },
-  });
-  if (!response.ok) {
-    return json({ error: `Resend returned ${response.status}` }, 502);
+  try {
+    return json({ ok: true, ...(await runBackfill(env)) });
+  } catch (err) {
+    return json({ error: (err as Error).message }, 502);
   }
-
-  const list = (await response.json()) as { data?: Array<{ id: string }> };
-  let imported = 0;
-  let skipped = 0;
-  const failed: string[] = [];
-
-  for (const item of list.data ?? []) {
-    const existing = await env.DB.prepare(`SELECT id FROM messages WHERE id = ? LIMIT 1`)
-      .bind(item.id)
-      .first();
-    if (existing) {
-      skipped += 1;
-      continue;
-    }
-    try {
-      await ingest(env, item.id);
-      imported += 1;
-    } catch (err) {
-      console.error("postern: backfill failed for", item.id, err);
-      failed.push(item.id);
-    }
-  }
-
-  return json({ ok: true, imported, skipped, failed });
 }
 
 interface SendRequest {

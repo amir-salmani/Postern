@@ -60,7 +60,11 @@
       <input id="q" type="search" placeholder="Search mail" autocomplete="off" spellcheck="false">
     </div>
     <h1 id="view-title">Inbox</h1>
-    <button id="refresh" class="quiet" title="Refresh">
+    <button id="sync" class="quiet" title="Fetch from Resend, then reload the list">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v6.5m0 0L5.5 6M8 8.5 10.5 6M2.5 10v2A1.5 1.5 0 0 0 4 13.5h8a1.5 1.5 0 0 0 1.5-1.5v-2" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Fetch</span>
+    </button>
+    <button id="refresh" class="quiet" title="Reload the list">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4M13.5 2v3.5H10" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
   </header>
@@ -92,6 +96,15 @@
     </section>
 
     <section class="list" aria-label="Messages">
+      <div id="bulkbar" class="bulkbar hidden">
+        <label class="check"><input type="checkbox" id="select-all"><span></span></label>
+        <span id="bulk-count"></span>
+        <div class="bulk-actions">
+          <button id="bulk-read" class="quiet">Mark read</button>
+          <button id="bulk-unread" class="quiet">Mark unread</button>
+          <button id="bulk-delete" class="quiet danger">Delete</button>
+        </div>
+      </div>
       <ol id="messages"></ol>
       <button id="more" class="quiet hidden">Load older</button>
       <p id="list-status" class="status"></p>
@@ -146,6 +159,17 @@
     </section>
   </div>
 </main>
+
+<div id="dialog" class="dialog-backdrop hidden">
+  <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dialog-title">
+    <h2 id="dialog-title"></h2>
+    <p id="dialog-text"></p>
+    <div class="dialog-actions">
+      <button id="dialog-cancel" class="quiet">Cancel</button>
+      <button id="dialog-ok" class="primary danger-solid">Delete</button>
+    </div>
+  </div>
+</div>
 
 <script type="module" src="/app.js"></script>
 </body>

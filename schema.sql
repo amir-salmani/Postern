@@ -75,3 +75,12 @@ CREATE INDEX IF NOT EXISTS idx_events_email   ON events (email_id);
 -- Set when a message has been included in an unread reminder, so the hourly
 -- cron nags once per message rather than once per hour forever.
 ALTER TABLE messages ADD COLUMN reminded_ms INTEGER;
+
+-- Deleting a message removes our row and our R2 object, but Resend keeps its
+-- own copy for 30 days — so without this, the next sync would cheerfully
+-- resurrect everything you just deleted. A tombstone is the record that a
+-- deletion was intended, which the row itself can no longer carry.
+CREATE TABLE IF NOT EXISTS tombstones (
+  id         TEXT PRIMARY KEY,
+  deleted_ms INTEGER NOT NULL
+);

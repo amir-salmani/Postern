@@ -25,6 +25,7 @@ const state = {
   allowRemote: false,
   showSource: false,
   compose: null,
+  picked: new Set(),
 };
 
 const el = (id) => document.getElementById(id);
@@ -73,6 +74,8 @@ async function loadFolder(folder, { append = false } = {}) {
     state.folder = folder;
     state.cursor = null;
     state.messages = [];
+    state.picked.clear();
+    renderBulkBar();
     el("messages").replaceChildren();
     clearReader();
   }
@@ -105,7 +108,7 @@ function renderList(messages) {
     if (!message.seen) item.classList.add("unseen");
 
     const name = displayFrom(message);
-    item.append(avatarFor(name));
+    item.append(checkboxFor(message), avatarFor(name));
 
     // textContent throughout — every value here came from an email, and an
     // email is hostile input.
@@ -128,9 +131,61 @@ function renderList(messages) {
       item.append(tags);
     }
 
-    item.addEventListener("click", () => openMessage(message));
+    item.addEventListener("click", (event) => {
+      if (event.target.closest(".check")) return;   // selecting is not opening
+      openMessage(message);
+    });
     list.append(item);
   }
+}
+
+function checkboxFor(message) {
+  const label = document.createElement("label");
+  label.className = "check";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = state.picked.has(message.id);
+  input.addEventListener("change", () => {
+    if (input.checked) state.picked.add(message.id);
+    else state.picked.delete(message.id);
+    input.closest("li")?.classList.toggle("picked", input.checked);
+    renderBulkBar();
+  });
+  label.append(input, document.createElement("span"));
+  return label;
+}
+
+function renderBulkBar() {
+  const count = state.picked.size;
+  document.body.classList.toggle("selecting", count > 0);
+  el("bulkbar").classList.toggle("hidden", count === 0);
+  el("bulk-count").textContent = `${count} selected`;
+  const all = state.messages.length > 0 && count === state.messages.length;
+  el("select-all").checked = all;
+  el("select-all").indeterminate = count > 0 && !all;
+}
+
+function clearSelection() {
+  state.picked.clear();
+  document.querySelectorAll("#messages li.picked").forEach((li) => li.classList.remove("picked"));
+  document.querySelectorAll("#messages .check input").forEach((i) => { i.checked = false; });
+  renderBulkBar();
+}
+
+async function bulkPatch(body) {
+  const ids = [...state.picked];
+  await Promise.all(ids.map((id) =>
+    api(`/messages/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).catch(() => {})));
+  for (const message of state.messages) {
+    if (state.picked.has(message.id) && typeof body.seen === "boolean") message.seen = body.seen;
+  }
+  clearSelection();
+  await loadFolder(state.folder);
+  loadCounts();
 }
 
 function span(className, text) {
@@ -639,6 +694,43 @@ function escapeHtml(value) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
+/**
+ * In-page confirm. The native confirm() opens at the top of the browser
+ * chrome, away from where you clicked, and its default button varies by
+ * platform — Enter here always means the action you asked for.
+ */
+function confirmDialog({ title, text, action = "Delete" }) {
+  return new Promise((resolve) => {
+    const backdrop = el("dialog");
+    el("dialog-title").textContent = title;
+    el("dialog-text").textContent = text;
+    el("dialog-ok").textContent = action;
+    backdrop.classList.remove("hidden");
+    el("dialog-ok").focus();
+
+    const finish = (value) => {
+      backdrop.classList.add("hidden");
+      el("dialog-ok").removeEventListener("click", onOk);
+      el("dialog-cancel").removeEventListener("click", onCancel);
+      backdrop.removeEventListener("click", onBackdrop);
+      document.removeEventListener("keydown", onKey, true);
+      resolve(value);
+    };
+    const onOk = () => finish(true);
+    const onCancel = () => finish(false);
+    const onBackdrop = (e) => { if (e.target === backdrop) finish(false); };
+    const onKey = (e) => {
+      if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); finish(true); }
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
+    };
+
+    el("dialog-ok").addEventListener("click", onOk);
+    el("dialog-cancel").addEventListener("click", onCancel);
+    backdrop.addEventListener("click", onBackdrop);
+    document.addEventListener("keydown", onKey, true);
+  });
+}
+
 function debounce(fn, delay) {
   let timer;
   return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), delay); };
@@ -667,15 +759,52 @@ el("toggle-source").addEventListener("click", () => { state.showSource = !state.
 
 el("delete").addEventListener("click", async () => {
   const message = state.selected;
-  if (!message || !confirm("Delete this message? The stored copy is removed too.")) return;
+  if (!message) return;
+  const ok = await confirmDialog({
+    title: "Delete this message?",
+    text: "The stored copy is removed from your R2 bucket, and it won't come back on the next fetch.",
+  });
+  if (!ok) return;
   try {
     await api(`/messages/${message.id}`, { method: "DELETE" });
     document.querySelector(`#messages li[data-id="${message.id}"]`)?.remove();
+    state.messages = state.messages.filter((m) => m.id !== message.id);
     clearReader();
     loadCounts();
   } catch (err) {
     el("list-status").textContent = err.message;
   }
+});
+
+el("select-all").addEventListener("change", (e) => {
+  if (e.target.checked) state.messages.forEach((m) => state.picked.add(m.id));
+  else state.picked.clear();
+  document.querySelectorAll("#messages li").forEach((li) => {
+    const on = state.picked.has(li.dataset.id);
+    li.classList.toggle("picked", on);
+    const input = li.querySelector(".check input");
+    if (input) input.checked = on;
+  });
+  renderBulkBar();
+});
+
+el("bulk-read").addEventListener("click", () => bulkPatch({ seen: true }));
+el("bulk-unread").addEventListener("click", () => bulkPatch({ seen: false }));
+
+el("bulk-delete").addEventListener("click", async () => {
+  const count = state.picked.size;
+  if (!count) return;
+  const ok = await confirmDialog({
+    title: `Delete ${count} message${count === 1 ? "" : "s"}?`,
+    text: "The stored copies are removed from your R2 bucket, and they won't come back on the next fetch.",
+  });
+  if (!ok) return;
+  const ids = [...state.picked];
+  await Promise.all(ids.map((id) => api(`/messages/${id}`, { method: "DELETE" }).catch(() => {})));
+  clearSelection();
+  clearReader();
+  await loadFolder(state.folder);
+  loadCounts();
 });
 
 // Search spans every folder — looking for a message you can't place is
@@ -691,10 +820,13 @@ el("sync").addEventListener("click", async () => {
   el("list-status").textContent = "Syncing from Resend…";
   try {
     const result = await (await api("/backfill", { method: "POST" })).json();
-    el("list-status").textContent =
-      `Imported ${result.imported}, already had ${result.skipped}` +
-      (result.failed?.length ? `, ${result.failed.length} failed` : "");
-    if (result.imported) { await loadFolder(state.folder); loadCounts(); }
+    const parts = [`fetched ${result.imported} new`];
+    if (result.skipped) parts.push(`${result.skipped} already stored`);
+    if (result.tombstoned) parts.push(`${result.tombstoned} previously deleted, left alone`);
+    if (result.failed?.length) parts.push(`${result.failed.length} failed`);
+    el("list-status").textContent = parts.join(" · ");
+    await loadFolder(state.folder);
+    loadCounts();
   } catch (err) {
     el("list-status").textContent = err.message;
   } finally {
@@ -721,7 +853,7 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "/") { e.preventDefault(); el("q").focus(); }
-  if (e.key === "Escape") clearReader();
+  if (e.key === "Escape") { clearSelection(); clearReader(); }
   if (e.key === "c") openCompose();
   if (e.key === "r" && state.selected) replyTo(state.selected);
   if (e.key === "j" || e.key === "k") {
@@ -736,16 +868,9 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// Refresh when you come back to the tab, at most once a minute. This replaces
-// polling entirely — see the note at the top of this file.
-let lastRefresh = Date.now();
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState !== "visible") return;
-  if (Date.now() - lastRefresh < 60_000) return;
-  lastRefresh = Date.now();
-  loadFolder(state.folder);
-  loadCounts();
-});
+// Nothing refreshes on its own — not on a timer, not on tab focus. A cron
+// fetches from Resend every 30 minutes server-side; the browser only asks
+// when you press Fetch or Refresh. Every request here is one you chose.
 
 loadFolder("inbox");
 loadCounts();
