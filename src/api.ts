@@ -6,6 +6,12 @@ import type { Env, Folder } from "./types";
 const FOLDERS: Folder[] = ["inbox", "quarantine", "sent"];
 const PAGE_SIZE = 50;
 
+const SELECT_COLUMNS = `SELECT id, thread_id, envelope_from, envelope_to, header_from, subject,
+            message_id, in_reply_to, refs,
+            received_ms, size_bytes, folder, seen, has_attach,
+            spf, dkim, dmarc
+       FROM messages`;
+
 /**
  * The read API. Phase 2 is deliberately read-only — sending arrives in
  * Phase 3 through src/senders/.
@@ -24,6 +30,10 @@ export async function handleApi(request: Request, env: Env, url: URL): Promise<R
     return listMessages(env, url);
   }
 
+  if (segments[0] === "counts" && request.method === "GET") {
+    return folderCounts(env);
+  }
+
   if (segments[0] === "events" && request.method === "GET") {
     return listEvents(env, url);
   }
@@ -40,9 +50,71 @@ export async function handleApi(request: Request, env: Env, url: URL): Promise<R
     const id = segments[1];
     if (segments[2] === "raw" && request.method === "GET") return rawMessage(env, id);
     if (segments[2] === "seen" && request.method === "POST") return markSeen(env, id);
+    if (!segments[2] && request.method === "PATCH") return patchMessage(request, env, id);
+    if (!segments[2] && request.method === "DELETE") return deleteMessage(env, id);
   }
 
   return json({ error: "not found" }, 404);
+}
+
+async function folderCounts(env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare(
+    `SELECT folder,
+            COUNT(*) AS total,
+            SUM(CASE WHEN seen = 0 THEN 1 ELSE 0 END) AS unread
+       FROM messages
+      GROUP BY folder`,
+  ).all();
+
+  const counts: Record<string, { total: number; unread: number }> = {};
+  for (const row of (results ?? []) as Array<{ folder: string; total: number; unread: number }>) {
+    counts[row.folder] = { total: row.total, unread: row.unread ?? 0 };
+  }
+  return json({ counts });
+}
+
+/** Mark read/unread, or move between folders. */
+async function patchMessage(request: Request, env: Env, id: string): Promise<Response> {
+  let body: { seen?: boolean; folder?: Folder };
+  try {
+    body = (await request.json()) as { seen?: boolean; folder?: Folder };
+  } catch {
+    return json({ error: "invalid JSON" }, 400);
+  }
+
+  const updates: string[] = [];
+  const values: unknown[] = [];
+  if (typeof body.seen === "boolean") {
+    updates.push("seen = ?");
+    values.push(body.seen ? 1 : 0);
+  }
+  if (body.folder && FOLDERS.includes(body.folder)) {
+    updates.push("folder = ?");
+    values.push(body.folder);
+  }
+  if (!updates.length) return json({ error: "nothing to update" }, 400);
+
+  values.push(id);
+  await env.DB.prepare(`UPDATE messages SET ${updates.join(", ")} WHERE id = ?`)
+    .bind(...values)
+    .run();
+  return json({ ok: true });
+}
+
+/**
+ * Removes the row and the stored message together. There is no trash folder:
+ * the point of this project is that the mail lives in your own bucket, so a
+ * delete that left 20 MB of orphaned .eml behind would be a lie.
+ */
+async function deleteMessage(env: Env, id: string): Promise<Response> {
+  const row = await env.DB.prepare(`SELECT r2_key FROM messages WHERE id = ? LIMIT 1`)
+    .bind(id)
+    .first<{ r2_key: string }>();
+  if (!row) return json({ error: "not found" }, 404);
+
+  await env.RAW.delete(row.r2_key);
+  await env.DB.prepare(`DELETE FROM messages WHERE id = ?`).bind(id).run();
+  return json({ ok: true });
 }
 
 async function listMessages(env: Env, url: URL): Promise<Response> {
@@ -54,18 +126,27 @@ async function listMessages(env: Env, url: URL): Promise<Response> {
   const before = Number(url.searchParams.get("before"));
   const cursor = Number.isFinite(before) && before > 0 ? before : Number.MAX_SAFE_INTEGER;
 
-  const { results } = await env.DB.prepare(
-    `SELECT id, thread_id, envelope_from, envelope_to, header_from, subject,
-            message_id, in_reply_to, refs,
-            received_ms, size_bytes, folder, seen, has_attach,
-            spf, dkim, dmarc
-       FROM messages
-      WHERE folder = ? AND received_ms < ?
-      ORDER BY received_ms DESC
-      LIMIT ?`,
-  )
-    .bind(folder, cursor, PAGE_SIZE)
-    .all();
+  // Search spans every folder — looking for a message you can't place is
+  // exactly when you don't know which folder it's in.
+  const query = (url.searchParams.get("q") ?? "").trim();
+  const like = `%${query}%`;
+
+  const statement = query
+    ? env.DB.prepare(
+        `${SELECT_COLUMNS}
+          WHERE received_ms < ?
+            AND (subject LIKE ? OR envelope_from LIKE ? OR header_from LIKE ?)
+          ORDER BY received_ms DESC
+          LIMIT ?`,
+      ).bind(cursor, like, like, like, PAGE_SIZE)
+    : env.DB.prepare(
+        `${SELECT_COLUMNS}
+          WHERE folder = ? AND received_ms < ?
+          ORDER BY received_ms DESC
+          LIMIT ?`,
+      ).bind(folder, cursor, PAGE_SIZE);
+
+  const { results } = await statement.all();
 
   const messages = results ?? [];
   const last = messages[messages.length - 1] as { received_ms?: number } | undefined;

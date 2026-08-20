@@ -1,72 +1,125 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#212842">
 <title>Postern</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-<header class="masthead">
-  <svg class="mark" viewBox="5.9 5.9 52.2 52.2" aria-hidden="true" fill="none"
-     stroke="currentColor" stroke-width="6.4" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M12 51 L32 13 L52 51"/><path d="M20.5 35 H43.5"/>
-    <g fill="currentColor" stroke="none">
-      <circle cx="32" cy="13" r="4.6"/><circle cx="12" cy="51" r="4.6"/><circle cx="52" cy="51" r="4.6"/>
-    </g>
-  </svg>
-  <h1>Postern</h1>
-  <nav class="folders" role="tablist">
-    <button role="tab" data-folder="inbox" class="active">Inbox</button>
-    <button role="tab" data-folder="quarantine">Quarantine</button>
-    <button role="tab" data-folder="sent">Sent</button>
-    <button role="tab" data-folder="events">Events</button>
+
+<aside class="sidebar">
+  <div class="brand">
+    <svg class="mark" viewBox="5.9 5.9 52.2 52.2" aria-hidden="true" fill="none"
+         stroke="currentColor" stroke-width="6.4" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 51 L32 13 L52 51"/><path d="M20.5 35 H43.5"/>
+      <g fill="currentColor" stroke="none">
+        <circle cx="32" cy="13" r="4.6"/><circle cx="12" cy="51" r="4.6"/><circle cx="52" cy="51" r="4.6"/>
+      </g>
+    </svg>
+    <span>Postern</span>
+  </div>
+
+  <button id="new" class="compose-btn">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    Compose
+  </button>
+
+  <nav class="folders">
+    <button data-folder="inbox" class="active">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 9.5V4a1.5 1.5 0 0 1 1.5-1.5h9A1.5 1.5 0 0 1 14 4v5.5m-12 0h3l1 2h4l1-2h3m-12 0V12a1.5 1.5 0 0 0 1.5 1.5h9A1.5 1.5 0 0 0 14 12V9.5" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/></svg>
+      <span>Inbox</span><em data-count="inbox"></em>
+    </button>
+    <button data-folder="quarantine">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 3 4.2v3.4c0 3 2.1 5.4 5 6.2 2.9-.8 5-3.2 5-6.2V4.2L8 2.2Z" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/></svg>
+      <span>Quarantine</span><em data-count="quarantine"></em>
+    </button>
+    <button data-folder="sent">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M14 2 2 7.2l4.6 1.6M14 2 9.4 14l-1.6-4.6M14 2 6.6 8.8" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/></svg>
+      <span>Sent</span><em data-count="sent"></em>
+    </button>
+    <button data-folder="events">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h3l2-4.5L9 12l2-4h3" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Activity</span>
+    </button>
   </nav>
-  <button id="sync" class="ghost" title="Pull anything Resend is holding that we missed">Sync</button>
-  <button id="new" class="ghost">New</button>
-  <button id="refresh" class="ghost" title="Refresh">Refresh</button>
-</header>
+
+  <div class="sidebar-foot">
+    <button id="sync" class="quiet">Sync from Resend</button>
+    <button id="theme" class="quiet" title="Toggle theme">Appearance</button>
+  </div>
+</aside>
 
 <main>
-  <section class="list" aria-label="Messages">
-    <ol id="messages"></ol>
-    <button id="more" class="ghost hidden">Load older</button>
-    <p id="list-status" class="status"></p>
-  </section>
+  <header class="toolbar">
+    <div class="search">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.3" stroke="currentColor" stroke-width="1.4" fill="none"/><path d="M10.2 10.2 14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      <input id="q" type="search" placeholder="Search mail" autocomplete="off" spellcheck="false">
+    </div>
+    <h1 id="view-title">Inbox</h1>
+    <button id="refresh" class="quiet" title="Refresh">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4M13.5 2v3.5H10" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </header>
 
-  <section class="reader" aria-label="Message">
-    <div id="reader-empty" class="status">Select a message.</div>
-    <form id="compose" class="compose hidden">
-      <input id="c-to" type="text" placeholder="To" autocomplete="off" required>
-      <input id="c-subject" type="text" placeholder="Subject" autocomplete="off">
-      <textarea id="c-body" rows="12" placeholder="Write your message…" required></textarea>
-      <div class="controls">
-        <button type="submit" id="c-send" class="ghost">Send</button>
-        <button type="button" id="c-cancel" class="ghost">Cancel</button>
-        <span id="c-status" class="status"></span>
-      </div>
-    </form>
+  <div class="panes">
+    <section class="list" aria-label="Messages">
+      <ol id="messages"></ol>
+      <button id="more" class="quiet hidden">Load older</button>
+      <p id="list-status" class="status"></p>
+    </section>
 
-    <article id="reader" class="hidden">
-      <h2 id="subject"></h2>
-      <dl class="meta">
-        <div><dt>From</dt><dd id="from"></dd></div>
-        <div><dt>To</dt><dd id="to"></dd></div>
-        <div><dt>Date</dt><dd id="date"></dd></div>
-        <div><dt>Auth</dt><dd id="auth" class="mono"></dd></div>
-      </dl>
-      <div class="controls">
-        <button id="toggle-remote" class="ghost">Load remote images</button>
-        <button id="toggle-source" class="ghost">Plain text</button>
-        <button id="reply" class="ghost">Reply</button>
-        <a id="download" class="ghost" download>Download .eml</a>
+    <section class="reader" aria-label="Message">
+      <div id="reader-empty" class="empty">
+        <svg viewBox="0 0 64 64" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="8" y="16" width="48" height="32" rx="4"/><path d="m8 20 24 16 24-16"/>
+        </svg>
+        <p>Select a message</p>
       </div>
-      <div id="attachments" class="attachments hidden"></div>
-      <iframe id="body" sandbox referrerpolicy="no-referrer" title="Message body"></iframe>
-    </article>
-  </section>
+
+      <form id="compose" class="compose hidden">
+        <div class="compose-head">
+          <h2>New message</h2>
+          <button type="button" id="c-cancel" class="quiet">Close</button>
+        </div>
+        <label><span>To</span><input id="c-to" type="text" autocomplete="off" required placeholder="name@example.com"></label>
+        <label><span>Subject</span><input id="c-subject" type="text" autocomplete="off" placeholder="Subject"></label>
+        <textarea id="c-body" placeholder="Write your message…" required></textarea>
+        <div class="compose-foot">
+          <button type="submit" id="c-send" class="primary">Send</button>
+          <span id="c-status" class="hint"></span>
+        </div>
+      </form>
+
+      <article id="reader" class="hidden">
+        <div class="reader-head">
+          <h2 id="subject"></h2>
+          <div class="reader-actions">
+            <button id="reply" class="quiet">Reply</button>
+            <button id="toggle-remote" class="quiet">Load images</button>
+            <button id="toggle-source" class="quiet">Plain text</button>
+            <a id="download" class="quiet" download>Download</a>
+            <button id="delete" class="quiet danger">Delete</button>
+          </div>
+        </div>
+
+        <div class="identity">
+          <div id="avatar" class="avatar"></div>
+          <div class="identity-text">
+            <div class="row"><strong id="from"></strong><time id="date"></time></div>
+            <div class="row"><span id="to" class="muted"></span></div>
+          </div>
+          <div id="auth" class="auth" title="Authentication results"></div>
+        </div>
+
+        <div id="attachments" class="attachments hidden"></div>
+        <iframe id="body" sandbox referrerpolicy="no-referrer" title="Message body"></iframe>
+      </article>
+    </section>
+  </div>
 </main>
 
 <script type="module" src="/app.js"></script>
