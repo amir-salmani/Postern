@@ -748,7 +748,6 @@ document.querySelectorAll(".folders button").forEach((button) => {
   });
 });
 
-el("refresh").addEventListener("click", () => { loadFolder(state.folder); loadCounts(); });
 el("more").addEventListener("click", () => loadFolder(state.folder, { append: true }));
 el("new").addEventListener("click", () => openCompose());
 el("c-cancel").addEventListener("click", closeCompose);
@@ -814,36 +813,97 @@ el("q").addEventListener("input", debounce((e) => {
   loadFolder(state.folder);
 }, 220));
 
+/**
+ * One action, not three. Fetch pulls anything Resend is holding, then reloads
+ * the view — there is no reason to ever want half of that, and three buttons
+ * doing overlapping jobs is worse than one that does the whole job.
+ */
 el("sync").addEventListener("click", async () => {
   const button = el("sync");
-  button.disabled = true;
-  el("list-status").textContent = "Syncing from Resend…";
+  if (button.dataset.busy) return;
+  button.dataset.busy = "1";
+  button.setAttribute("aria-busy", "true");
+  el("sync-label").textContent = "Fetching…";
+
   try {
     const result = await (await api("/backfill", { method: "POST" })).json();
-    const parts = [`fetched ${result.imported} new`];
-    if (result.skipped) parts.push(`${result.skipped} already stored`);
-    if (result.tombstoned) parts.push(`${result.tombstoned} previously deleted, left alone`);
-    if (result.failed?.length) parts.push(`${result.failed.length} failed`);
-    el("list-status").textContent = parts.join(" · ");
     await loadFolder(state.folder);
     loadCounts();
+
+    const parts = [];
+    if (result.imported) parts.push(`${result.imported} new`);
+    if (result.tombstoned) parts.push(`${result.tombstoned} previously deleted, left alone`);
+    if (result.failed?.length) parts.push(`${result.failed.length} failed`);
+    el("list-status").textContent = parts.length
+      ? parts.join(" · ")
+      : (state.messages.length ? "" : "Nothing here.");
   } catch (err) {
     el("list-status").textContent = err.message;
   } finally {
-    button.disabled = false;
+    delete button.dataset.busy;
+    button.removeAttribute("aria-busy");
+    el("sync-label").textContent = "Fetch";
   }
 });
 
+/**
+ * Theme switch. The knob is spring-driven rather than transitioned, so it
+ * animates from wherever it currently is and can be re-targeted mid-flight
+ * without jumping — the same behaviour as the switch on amirsalmani.com.
+ */
 const THEME_KEY = "postern-theme";
-const savedTheme = localStorage.getItem(THEME_KEY);
-if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+const toggle = el("theme");
 
-el("theme").addEventListener("click", () => {
-  const current = document.documentElement.dataset.theme
-    || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-  const next = current === "dark" ? "light" : "dark";
-  document.documentElement.dataset.theme = next;
+let knobValue = 0;      // 0 = dark, 1 = light
+let knobTarget = 0;
+let knobVelocity = 0;
+let knobFrame = null;
+
+function springTo(target) {
+  knobTarget = target;
+  if (knobFrame) return;
+  let last = performance.now();
+  const step = (now) => {
+    const dt = Math.min((now - last) / 1000, 1 / 30);
+    last = now;
+    // Critically damped: response 0.35s, damping ratio 1.
+    const stiffness = (2 * Math.PI / 0.35) ** 2;
+    const damping = 2 * (2 * Math.PI / 0.35);
+    const accel = stiffness * (knobTarget - knobValue) - damping * knobVelocity;
+    knobVelocity += accel * dt;
+    knobValue += knobVelocity * dt;
+
+    if (Math.abs(knobTarget - knobValue) < 0.001 && Math.abs(knobVelocity) < 0.001) {
+      knobValue = knobTarget;
+      knobVelocity = 0;
+      knobFrame = null;
+    } else {
+      knobFrame = requestAnimationFrame(step);
+    }
+    toggle.style.setProperty("--t", knobValue.toFixed(4));
+  };
+  knobFrame = requestAnimationFrame(step);
+}
+
+function applyTheme(theme, { animate = true } = {}) {
+  document.documentElement.dataset.theme = theme;
+  toggle.setAttribute("aria-pressed", String(theme === "dark"));
+  toggle.setAttribute("aria-label", `Switch to ${theme === "dark" ? "light" : "dark"} theme`);
+  const target = theme === "light" ? 1 : 0;
+  if (animate && !matchMedia("(prefers-reduced-motion: reduce)").matches) springTo(target);
+  else { knobValue = knobTarget = target; toggle.style.setProperty("--t", String(target)); }
+}
+
+applyTheme(
+  localStorage.getItem(THEME_KEY)
+    || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"),
+  { animate: false },
+);
+
+toggle.addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   localStorage.setItem(THEME_KEY, next);
+  applyTheme(next);
   renderBody();
 });
 

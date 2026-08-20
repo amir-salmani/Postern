@@ -48,8 +48,18 @@
   </nav>
 
   <div class="sidebar-foot">
-    <button id="sync" class="quiet">Sync from Resend</button>
-    <button id="theme" class="quiet" title="Toggle theme">Appearance</button>
+    <span class="foot-label">Appearance</span>
+    <button id="theme" class="theme-toggle" type="button" aria-pressed="true" aria-label="Switch theme">
+      <span class="knob" aria-hidden="true">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+          <circle cx="12" cy="12" r="4.2" fill="currentColor" stroke="none"/>
+          <path d="M12 1.8v2.4M12 19.8v2.4M4.4 4.4l1.7 1.7M17.9 17.9l1.7 1.7M1.8 12h2.4M19.8 12h2.4M4.4 19.6l1.7-1.7M17.9 6.1l1.7-1.7"/>
+        </svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M20.7 14.6A8.6 8.6 0 0 1 9.4 3.3a8.6 8.6 0 1 0 11.3 11.3z"/>
+        </svg>
+      </span>
+    </button>
   </div>
 </aside>
 
@@ -60,12 +70,9 @@
       <input id="q" type="search" placeholder="Search mail" autocomplete="off" spellcheck="false">
     </div>
     <h1 id="view-title">Inbox</h1>
-    <button id="sync" class="quiet" title="Fetch from Resend, then reload the list">
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v6.5m0 0L5.5 6M8 8.5 10.5 6M2.5 10v2A1.5 1.5 0 0 0 4 13.5h8a1.5 1.5 0 0 0 1.5-1.5v-2" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      <span>Fetch</span>
-    </button>
-    <button id="refresh" class="quiet" title="Reload the list">
+    <button id="sync" class="quiet" title="Fetch new mail from Resend and reload">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4M13.5 2v3.5H10" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span id="sync-label">Fetch</span>
     </button>
   </header>
 
