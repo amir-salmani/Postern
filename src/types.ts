@@ -18,8 +18,10 @@ export interface Env {
   SEND_FROM: string;
   /** Display name on outbound mail. */
   SEND_NAME: string;
-  /** Resend API key. Secret — never a var. */
+  /** Resend API key. Needs full access: sending, and reading received mail. */
   RESEND_API_KEY?: string;
+  /** Svix signing secret for the Resend inbound webhook. */
+  RESEND_WEBHOOK_SECRET?: string;
 }
 
 export type Folder = "inbox" | "quarantine" | "sent";
