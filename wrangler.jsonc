@@ -1,0 +1,39 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "postern",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "observability": { "enabled": true },
+
+  // Per-deploy config. Everything here is safe to commit — no secrets.
+  "vars": {
+    // The domain whose mail this instance owns.
+    "MAIL_DOMAIN": "example.com",
+
+    // Local-parts that land in the inbox. Everything else caught by the
+    // catch-all rule goes to quarantine. Comma-separated, no @.
+    "INBOX_ADDRESSES": "hi,amir",
+
+    // The safety net. A verified Email Routing destination address.
+    // Every message is forwarded here regardless of what storage does.
+    // Leave empty to disable — but don't, until you trust this thing.
+    "FORWARD_TO": "",
+
+    // Cloudflare Access. The API fails closed when these are unset, so an
+    // unconfigured deploy serves nothing rather than serving the mailbox.
+    "ACCESS_TEAM_DOMAIN": "",
+    "ACCESS_AUD": ""
+  },
+
+  // Served by Cloudflare before the Worker runs, so page loads cost nothing
+  // against the 100k/day free invocation budget. Only /api/* is billed.
+  "assets": { "directory": "./web" },
+
+  "d1_databases": [
+    { "binding": "DB", "database_name": "postern", "database_id": "REPLACE_ME" }
+  ],
+
+  "r2_buckets": [
+    { "binding": "RAW", "bucket_name": "postern-raw" }
+  ]
+}

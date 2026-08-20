@@ -1,0 +1,231 @@
+/* Postern — one stylesheet, both themes, no build step.
+   Palette and type follow amirsalmani.com: Midnight Indigo, Vanilla Cream,
+   Schibsted Grotesk with IBM Plex Mono for anything a machine emitted. */
+
+:root {
+  --indigo: #212842;
+  --cream: #f0e7d5;
+  --warn: #b4541f;
+
+  --surface: var(--indigo);
+  --surface-alt: #1a2036;
+  --ink: var(--cream);
+  --ink-dim: color-mix(in srgb, var(--cream) 62%, transparent);
+  --rule: color-mix(in srgb, var(--cream) 16%, transparent);
+
+  --sans: "Schibsted Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --surface: var(--cream);
+  --surface-alt: #e5dac4;
+  --ink: var(--indigo);
+  --ink-dim: color-mix(in srgb, var(--indigo) 62%, transparent);
+  --rule: color-mix(in srgb, var(--indigo) 16%, transparent);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --surface: var(--cream);
+    --surface-alt: #e5dac4;
+    --ink: var(--indigo);
+    --ink-dim: color-mix(in srgb, var(--indigo) 62%, transparent);
+    --rule: color-mix(in srgb, var(--indigo) 16%, transparent);
+    color-scheme: light;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* Masthead */
+
+.masthead {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* The mark: an A-frame — two legs, one plane. Pure geometry, so it survives
+   at any size without an asset. */
+.mark {
+  width: 18px;
+  height: 18px;
+  background: currentColor;
+  clip-path: polygon(50% 0, 100% 100%, 78% 100%, 50% 42%, 22% 100%, 0 100%);
+}
+
+.folders {
+  display: flex;
+  gap: 0.25rem;
+  margin-left: auto;
+}
+
+.folders button {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+}
+
+.folders button.active {
+  color: var(--ink);
+  border-bottom-color: currentColor;
+}
+
+.ghost {
+  background: none;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.65rem;
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.ghost:hover { border-color: var(--ink); background: var(--surface-alt); }
+
+/* Layout */
+
+main {
+  display: grid;
+  grid-template-columns: minmax(280px, 380px) 1fr;
+  min-height: 0;
+}
+
+.list {
+  border-right: 1px solid var(--rule);
+  overflow-y: auto;
+  padding-bottom: 2rem;
+}
+
+.list ol { list-style: none; margin: 0; padding: 0; }
+
+.list li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 0.5rem;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--rule);
+  cursor: pointer;
+}
+
+.list li:hover { background: var(--surface-alt); }
+.list li.selected { background: var(--surface-alt); box-shadow: inset 3px 0 0 var(--ink); }
+
+.from { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subject { grid-column: 1 / -1; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.when { color: var(--ink-dim); font-size: 0.75rem; }
+
+.unseen .from::before {
+  content: "";
+  display: inline-block;
+  width: 6px; height: 6px;
+  margin-right: 0.45rem;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: middle;
+}
+
+.badge {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin-top: 0.3rem;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-dim);
+}
+
+.badge.warn { color: var(--warn); border-color: currentColor; }
+
+/* Reader */
+
+.reader { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+
+.reader article { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+
+.reader h2 {
+  margin: 0;
+  padding: 1.1rem 1.5rem 0.6rem;
+  font-size: 1.15rem;
+  letter-spacing: -0.015em;
+}
+
+.meta {
+  margin: 0;
+  padding: 0 1.5rem 0.8rem;
+  display: grid;
+  gap: 0.15rem;
+  font-size: 0.82rem;
+  color: var(--ink-dim);
+}
+
+.meta div { display: flex; gap: 0.5rem; }
+.meta dt { min-width: 3.2rem; font-family: var(--mono); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; padding-top: 0.12rem; }
+.meta dd { margin: 0; overflow-wrap: anywhere; }
+.mono { font-family: var(--mono); font-size: 0.75rem; }
+
+.controls, .attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0 1.5rem 0.8rem;
+}
+
+.attachments { border-top: 1px solid var(--rule); padding-top: 0.8rem; }
+
+#body {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.status { padding: 1.5rem; color: var(--ink-dim); font-size: 0.85rem; }
+.hidden { display: none !important; }
+
+@media (max-width: 720px) {
+  main { grid-template-columns: 1fr; }
+  .list { border-right: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

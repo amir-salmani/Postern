@@ -1,0 +1,3 @@
+# Phase 3 only — not used by the ingest worker.
+# Copy to .dev.vars (gitignored) and set via `wrangler secret put` in production.
+RESEND_API_KEY=

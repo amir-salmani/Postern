@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Postern</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="mark" aria-hidden="true"></div>
+  <h1>Postern</h1>
+  <nav class="folders" role="tablist">
+    <button role="tab" data-folder="inbox" class="active">Inbox</button>
+    <button role="tab" data-folder="quarantine">Quarantine</button>
+    <button role="tab" data-folder="sent">Sent</button>
+  </nav>
+  <button id="refresh" class="ghost" title="Refresh">Refresh</button>
+</header>
+
+<main>
+  <section class="list" aria-label="Messages">
+    <ol id="messages"></ol>
+    <button id="more" class="ghost hidden">Load older</button>
+    <p id="list-status" class="status"></p>
+  </section>
+
+  <section class="reader" aria-label="Message">
+    <div id="reader-empty" class="status">Select a message.</div>
+    <article id="reader" class="hidden">
+      <h2 id="subject"></h2>
+      <dl class="meta">
+        <div><dt>From</dt><dd id="from"></dd></div>
+        <div><dt>To</dt><dd id="to"></dd></div>
+        <div><dt>Date</dt><dd id="date"></dd></div>
+        <div><dt>Auth</dt><dd id="auth" class="mono"></dd></div>
+      </dl>
+      <div class="controls">
+        <button id="toggle-remote" class="ghost">Load remote images</button>
+        <button id="toggle-source" class="ghost">Plain text</button>
+        <a id="download" class="ghost" download>Download .eml</a>
+      </div>
+      <div id="attachments" class="attachments hidden"></div>
+      <iframe id="body" sandbox referrerpolicy="no-referrer" title="Message body"></iframe>
+    </article>
+  </section>
+</main>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>
