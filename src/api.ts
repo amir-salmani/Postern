@@ -30,6 +30,10 @@ export async function handleApi(request: Request, env: Env, url: URL): Promise<R
     return listMessages(env, url);
   }
 
+  if (segments[0] === "overview" && request.method === "GET") {
+    return overview(env);
+  }
+
   if (segments[0] === "counts" && request.method === "GET") {
     return folderCounts(env);
   }
@@ -55,6 +59,102 @@ export async function handleApi(request: Request, env: Env, url: URL): Promise<R
   }
 
   return json({ error: "not found" }, 404);
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Everything the dashboard needs in one request.
+ *
+ * Quota is counted from Resend's own lists rather than our tables, because
+ * Resend is what enforces it — and its free tier bills inbound and outbound
+ * against the same allowance, which is the number actually worth watching.
+ */
+async function overview(env: Env): Promise<Response> {
+  const now = Date.now();
+  const since = now - 13 * DAY_MS;
+
+  const [folders, storage, series] = await Promise.all([
+    env.DB.prepare(
+      `SELECT folder, COUNT(*) AS total, SUM(CASE WHEN seen = 0 THEN 1 ELSE 0 END) AS unread
+         FROM messages GROUP BY folder`,
+    ).all(),
+    env.DB.prepare(
+      `SELECT COUNT(*) AS messages, COALESCE(SUM(size_bytes), 0) AS bytes FROM messages`,
+    ).first<{ messages: number; bytes: number }>(),
+    env.DB.prepare(
+      `SELECT date(received_ms / 1000, 'unixepoch') AS day,
+              SUM(CASE WHEN folder = 'sent' THEN 0 ELSE 1 END) AS received,
+              SUM(CASE WHEN folder = 'sent' THEN 1 ELSE 0 END) AS sent
+         FROM messages
+        WHERE received_ms >= ?
+        GROUP BY day ORDER BY day`,
+    ).bind(since).all(),
+  ]);
+
+  const counts: Record<string, { total: number; unread: number }> = {};
+  for (const row of (folders.results ?? []) as Array<{ folder: string; total: number; unread: number }>) {
+    counts[row.folder] = { total: row.total, unread: row.unread ?? 0 };
+  }
+
+  return json({
+    counts,
+    storage: { messages: storage?.messages ?? 0, bytes: storage?.bytes ?? 0, limitBytes: 10 * 1024 ** 3 },
+    series: fillDays((series.results ?? []) as Array<{ day: string; received: number; sent: number }>, now),
+    quota: await resendQuota(env, now),
+  });
+}
+
+/** Gaps read as zero, not as missing — a chart with holes in it lies. */
+function fillDays(
+  rows: Array<{ day: string; received: number; sent: number }>,
+  now: number,
+): Array<{ day: string; received: number; sent: number }> {
+  const byDay = new Map(rows.map((r) => [r.day, r]));
+  const out = [];
+  for (let i = 13; i >= 0; i -= 1) {
+    const day = new Date(now - i * DAY_MS).toISOString().slice(0, 10);
+    const row = byDay.get(day);
+    out.push({ day, received: row?.received ?? 0, sent: row?.sent ?? 0 });
+  }
+  return out;
+}
+
+interface QuotaWindow { sent: number; received: number; total: number; limit: number }
+
+async function resendQuota(
+  env: Env,
+  now: number,
+): Promise<{ day: QuotaWindow; month: QuotaWindow; available: boolean }> {
+  const empty = { sent: 0, received: 0, total: 0, limit: 0 };
+  if (!env.RESEND_API_KEY) {
+    return { day: { ...empty, limit: 100 }, month: { ...empty, limit: 3000 }, available: false };
+  }
+
+  const headers = { Authorization: `Bearer ${env.RESEND_API_KEY}` };
+  const [sentRes, receivedRes] = await Promise.all([
+    fetch("https://api.resend.com/emails", { headers }),
+    fetch("https://api.resend.com/emails/receiving", { headers }),
+  ]);
+  if (!sentRes.ok || !receivedRes.ok) {
+    return { day: { ...empty, limit: 100 }, month: { ...empty, limit: 3000 }, available: false };
+  }
+
+  const sent = ((await sentRes.json()) as { data?: Array<{ created_at?: string }> }).data ?? [];
+  const received = ((await receivedRes.json()) as { data?: Array<{ created_at?: string }> }).data ?? [];
+
+  const startOfDay = new Date(now).setUTCHours(0, 0, 0, 0);
+  const startOfMonth = Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), 1);
+  const after = (list: Array<{ created_at?: string }>, from: number) =>
+    list.filter((x) => Date.parse(x.created_at ?? "") >= from).length;
+
+  const build = (from: number, limit: number): QuotaWindow => {
+    const s = after(sent, from);
+    const r = after(received, from);
+    return { sent: s, received: r, total: s + r, limit };
+  };
+
+  return { day: build(startOfDay, 100), month: build(startOfMonth, 3000), available: true };
 }
 
 async function folderCounts(env: Env): Promise<Response> {

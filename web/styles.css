@@ -486,3 +486,123 @@ main { display: grid; grid-template-rows: auto 1fr; min-width: 0; min-height: 0;
 ::-webkit-scrollbar { width: 11px; }
 ::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
 ::-webkit-scrollbar-thumb:hover { background: var(--ink-3); background-clip: content-box; }
+
+/* ───────── Dashboard ─────────
+   Series colours are validated for both surfaces (OKLab CVD ΔE 20.4 deutan,
+   28.4 normal) — see the note in app.js. They are the only two hues here;
+   everything else is ink at three opacities. */
+
+.dashboard {
+  grid-column: 1 / -1;
+  overflow-y: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+
+.kpi {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--raised);
+}
+
+.kpi dt { font-size: 12px; color: var(--ink-3); margin: 0 0 6px; }
+.kpi dd { margin: 0; font-size: 27px; font-weight: 600; letter-spacing: -0.03em; line-height: 1; }
+.kpi .sub { margin-top: 5px; font-size: 12px; color: var(--ink-3); }
+.kpi.alert dd { color: var(--accent); }
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--raised);
+  overflow: hidden;
+}
+
+.card > header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.card h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.card-note { font-size: 11.5px; color: var(--ink-3); margin-left: auto; text-align: right; }
+
+.legend { display: flex; gap: 14px; margin-left: auto; font-size: 11.5px; color: var(--ink-2); }
+.legend span { display: flex; align-items: center; gap: 6px; }
+.legend i { width: 9px; height: 9px; border-radius: 3px; display: block; }
+
+/* Meters — a ratio against a limit, on a same-ramp track. */
+.meters { padding: 16px; display: grid; gap: 18px; }
+.meter-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.meter-head strong { font-size: 13px; font-weight: 550; }
+.meter-head .value { margin-left: auto; font-family: var(--mono); font-size: 12.5px; }
+.meter-head .pct { font-size: 11.5px; color: var(--ink-3); min-width: 34px; text-align: right; }
+
+.track {
+  position: relative;
+  height: 9px;
+  border-radius: 5px;
+  background: var(--line);
+  overflow: hidden;
+  display: flex;
+  gap: 2px;                 /* 2px surface gap between adjacent fills */
+}
+
+.track i { display: block; height: 100%; }
+.track i:first-child { border-radius: 5px 0 0 5px; }
+.track i:last-child { border-radius: 0 5px 5px 0; }
+.track i:only-child { border-radius: 5px; }
+.meter-sub { margin-top: 7px; font-size: 11.5px; color: var(--ink-3); display: flex; gap: 16px; }
+.meter-sub span { display: flex; align-items: center; gap: 6px; }
+.meter-sub i { width: 8px; height: 8px; border-radius: 2px; display: block; }
+
+.chart { padding: 8px 12px 12px; position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart .grid line { stroke: var(--line); stroke-width: 1; }
+.chart .axis { fill: var(--ink-3); font-size: 10px; font-family: var(--mono); }
+.chart rect.bar { transition: opacity var(--fast); }
+.chart g.day:hover rect.bar { opacity: .78; }
+.chart rect.hit { fill: transparent; cursor: default; }
+
+.tooltip {
+  position: absolute;
+  z-index: 5;
+  padding: 7px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--raised-2);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  pointer-events: none;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity var(--fast);
+}
+
+.tooltip.on { opacity: 1; }
+.tooltip b { display: block; margin-bottom: 3px; font-weight: 600; }
+.tooltip .k { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
+.tooltip .k i { width: 8px; height: 8px; border-radius: 2px; display: block; }
+
+.event-log { list-style: none; margin: 0; padding: 6px; display: flex; flex-direction: column; }
+
+.event-log li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+}
+
+.event-log li:hover { background: var(--line); }
+.event-log .type { font-family: var(--mono); font-size: 11.5px; }
+.event-log .what { color: var(--ink-2); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.event-log time { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.event-log .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 2px; }

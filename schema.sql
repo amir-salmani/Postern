@@ -71,3 +71,7 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS idx_events_created ON events (created_ms DESC);
 CREATE INDEX IF NOT EXISTS idx_events_email   ON events (email_id);
+
+-- Set when a message has been included in an unread reminder, so the hourly
+-- cron nags once per message rather than once per hour forever.
+ALTER TABLE messages ADD COLUMN reminded_ms INTEGER;

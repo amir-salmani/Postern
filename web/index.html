@@ -43,7 +43,7 @@
     </button>
     <button data-folder="events">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h3l2-4.5L9 12l2-4h3" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      <span>Activity</span>
+      <span>Dashboard</span>
     </button>
   </nav>
 
@@ -66,6 +66,31 @@
   </header>
 
   <div class="panes">
+    <section id="dashboard" class="dashboard hidden" aria-label="Overview">
+      <div class="kpis" id="kpis"></div>
+
+      <section class="card">
+        <header><h3>Free tier usage</h3><span class="card-note">Resend counts inbound and outbound against one allowance</span></header>
+        <div id="meters" class="meters"></div>
+      </section>
+
+      <section class="card">
+        <header>
+          <h3>Mail volume</h3>
+          <div class="legend">
+            <span><i style="background:#D9622B"></i>Received</span>
+            <span><i style="background:#00A3C4"></i>Sent</span>
+          </div>
+        </header>
+        <div id="chart" class="chart"></div>
+      </section>
+
+      <section class="card">
+        <header><h3>Activity</h3><span class="card-note" id="events-note"></span></header>
+        <ol id="event-log" class="event-log"></ol>
+      </section>
+    </section>
+
     <section class="list" aria-label="Messages">
       <ol id="messages"></ol>
       <button id="more" class="quiet hidden">Load older</button>

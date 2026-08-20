@@ -1,5 +1,6 @@
 import { handleApi } from "./api";
 import { handleInbound } from "./inbound";
+import { handleScheduled } from "./reminder";
 import type { Env } from "./types";
 
 /**
@@ -9,6 +10,8 @@ import type { Env } from "./types";
  * invocations — only /api/* requests are billed.
  */
 export default {
+  scheduled: (_event, env, ctx) => ctx.waitUntil(handleScheduled(env)),
+
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url);
 
