@@ -6,6 +6,11 @@
   "compatibility_date": "2026-08-01",
   "observability": { "enabled": true },
 
+  // The real hostname. Access can only protect a zone you own, not
+  // *.workers.dev — and workers_dev is off so this is the only way in.
+  "routes": [{ "pattern": "mail.amirsalmani.com", "custom_domain": true }],
+  "workers_dev": false,
+
   // Per-deploy config. Everything here is safe to commit — no secrets.
   "vars": {
     // The domain whose mail this instance owns.
