@@ -7,9 +7,9 @@ Mail for your domain is received by Resend, stored in *your* D1 database and
 account. Outbound goes through a pluggable sender. No provider holds your
 mail, and nothing here costs money at personal volume.
 
-**Status: Phase 2 — ingest and read.** No sending yet. Run it alongside your
-existing mailbox for a few weeks and prove it captures mail reliably before
-anything depends on it.
+**Status: in daily use.** Receives, stores, reads, replies, searches, and
+forwards every message on to your existing mailbox. See `ROADMAP.md` for
+what's still missing.
 
 ## How it works
 
@@ -139,12 +139,18 @@ npx wrangler d1 execute postern --remote \
   Sets `In-Reply-To` and `References`, and writes a copy of every sent message
   back to D1 — Resend has no notion of your mailbox, so without that your own
   sent mail exists nowhere you can read it.
-- **Phase 4 — search.** D1 FTS5 over subject, sender and body text, populated
-  lazily on first open.
-- **Phase 5 — encryption at rest.** The browser already does the parsing, so
+- **Phase 4 — search.** ✅ D1 FTS5 over subject, sender and body, indexed at
+  ingest where the body is already a decoded string.
+- **Phase 5 — signatures.** Planned. Per-identity, appended client-side so
+  it stays editable, `-- ` delimited so clients can collapse it.
+- **Phase 6 — auto-reply / working hours.** Planned. Harder than it looks —
+  see ROADMAP.md for the rules that stop a vacation responder becoming a
+  spam cannon.
+- **Phase 7 — encryption at rest.** The browser already does the parsing, so
   the server never needs to see a decoded body. Encrypt the `.eml` before it
-  reaches R2. Note the honest limit: Cloudflare terminates inbound SMTP, so
-  this is encryption at rest, not end-to-end.
+  reaches R2. Honest limit: Resend terminates inbound SMTP, so this is
+  encryption at rest, not end-to-end.
+
 
 ## Free tier headroom
 
