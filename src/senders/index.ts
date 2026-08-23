@@ -18,6 +18,9 @@ export interface OutboundMessage {
   /** RFC 5322 threading. Omit these and replies orphan in the recipient's client. */
   inReplyTo?: string;
   references?: string;
+  /** Where a reply should actually go — used by forwards to reach the original sender. */
+  replyTo?: string;
+  attachments?: Array<{ filename: string; content: string }>;
   headers?: Record<string, string>;
 }
 

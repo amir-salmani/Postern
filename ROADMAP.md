@@ -1,54 +1,59 @@
 # Postern — what's left
 
-Status as of 2026-08-21. Working end to end: receive → store → read → reply,
-plus quarantine routing, event log, dashboard, 30-minute fetch, and a
-six-hour unread reminder.
+Status 2026-08-23, after three days of real mail.
+
+Working and verified against live traffic: receive → store → read → reply,
+quarantine routing, full-text search over bodies, tombstoned deletes that
+survive sync, Trash with a 30-day purge, attachment capture, always-forward
+to Gmail, the dashboard, and the unread reminder.
 
 ## Worth doing next
 
-**Threading in the UI.** `thread_id` is captured on every message and nothing
-reads it. A conversation currently shows as unrelated rows. This is the
-largest gap between Postern and a mail client people expect, and the data is
-already there.
+**Rules / filters.** The strongest signal from real use: six of the first
+seven messages were notifications, and all six went straight to the bin.
+Sender or subject rules that auto-trash or auto-label would remove most of
+the triage. Bigger day-to-day win than anything else on this list.
 
-**Attachment handling on inbound.** Resend exposes attachments through a
-separate API that ingest doesn't call yet, so an attached file is currently
-visible only if it was inline. `has_attach` is guessed from Content-Type.
+**Threading in the UI.** Built but still unexercised — no real back-and-forth
+has arrived. Note that repeated notifications sharing a subject are correctly
+*not* threaded, since they carry no In-Reply-To.
 
-**Attachments on outbound.** Compose is text-only.
+**Attachments on outbound.** Inbound capture works; compose is still
+text-only.
 
-**Real search.** `LIKE` over subject and sender only — bodies aren't indexed,
-because they live in R2 and are never parsed server-side. An FTS5 table
-populated on first open would fix it without adding server CPU.
+**Gmail "Send mail as".** Resend's free tier includes an SMTP relay, so Gmail
+can send as hi@amirsalmani.com directly. Combined with always-forward, that
+closes the loop: read and reply entirely from Gmail, with Postern as storage
+and archive. Removes the last reason Postern has to be a daily destination.
 
 ## Should do, less visible
 
-**Rate-limit the reminder against quota.** It sends unconditionally. If the
-daily allowance is nearly spent, sending a reminder can consume the headroom
-your actual mail needs.
+**Forward failures are logged and invisible.** If a forward fails the message
+is still stored, but nothing surfaces the failure except the Worker log.
 
-**Bounce handling.** `email.bounced` and `email.failed` are logged and
-otherwise ignored. A message you sent that never arrived looks identical to
-one that did, unless you open the dashboard.
+**Bounce handling.** email.bounced and email.failed are recorded and
+otherwise ignored — a message that never arrived looks like one that did
+unless you open the dashboard.
 
-**Quarantine review.** No way to move a message from quarantine to inbox in
-the UI, though the API supports it. Right now a false positive is stuck.
+**Quarantine review.** No way to move a message back to the inbox from the
+UI, though the API supports it. A false positive is currently stuck.
 
-**Tombstone growth.** Nothing prunes them. Harmless for years at this volume,
-but unbounded is unbounded.
+**Attachment budget on forwards.** Capped at 1 MB total because base64 is the
+one genuinely CPU-bound step and the free plan allows 10ms. Larger files are
+named in the trailer instead. Liftable on a paid plan.
+
+**Tombstone growth.** Nothing prunes them. Harmless for years at this volume.
 
 ## Nice to have
 
-- Per-alias identity — reply from the address it was sent to, not always SEND_FROM
 - Keyboard shortcut overlay (`?`)
-- Encryption at rest (Phase 5) — the browser already parses, so the server
-  never needs to see a decoded body. Note the honest limit: Resend terminates
-  SMTP, so this is encryption at rest, not end-to-end
+- Encryption at rest — the browser already parses, so the server never needs
+  to see a decoded body. Honest limit: Resend terminates SMTP, so this is
+  encryption at rest, not end-to-end
 - Multiple domains on one instance
-- Export — download the whole mailbox as .eml files
+- Export the whole mailbox as .eml
 
 ## Elsewhere, not in this repo
 
-**Update amirsalmani.com** to list Postern as a project. The site's Projects
-nav item is still "soon". Postern is the strongest thing to put behind it:
-self-hosted email, own infrastructure, and it matches the site's own brand.
+**Update amirsalmani.com** to list Postern as a project. The Projects nav item
+is still "soon".

@@ -5,6 +5,13 @@ import type { Env } from "./types";
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
 /**
+ * Minimum gap between digests. Without it, a batch arriving over ten minutes
+ * crosses the six-hour line across several cron ticks and produces a separate
+ * email for each — which is what happened on 22 Aug at 05:30 and 06:00.
+ */
+const REMINDER_COOLDOWN_MS = 4 * 60 * 60 * 1000;
+
+/**
  * The scheduled run: fetch, then consider a nudge.
  *
  * One cron does both so the whole thing costs 48 invocations a day rather
@@ -76,6 +83,13 @@ async function purgeExpiredTrash(env: Env): Promise<void> {
  */
 async function remindUnread(env: Env): Promise<void> {
   if (!env.FORWARD_TO) return;
+
+  // A reminder already went out recently, so anything newly past the
+  // threshold waits for the next window rather than arriving as a second mail.
+  const lastReminder = await env.DB.prepare(
+    `SELECT MAX(reminded_ms) AS last FROM messages WHERE reminded_ms IS NOT NULL`,
+  ).first<{ last: number | null }>();
+  if (lastReminder?.last && Date.now() - lastReminder.last < REMINDER_COOLDOWN_MS) return;
 
   const cutoff = Date.now() - SIX_HOURS_MS;
   const { results } = await env.DB.prepare(

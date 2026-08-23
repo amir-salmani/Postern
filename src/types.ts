@@ -6,8 +6,10 @@ export interface Env {
   MAIL_DOMAIN: string;
   /** Comma-separated local-parts that reach the inbox. Everything else quarantines. */
   INBOX_ADDRESSES: string;
-  /** Verified Email Routing destination. Empty disables the safety net. */
+  /** Mailbox every inbound message is forwarded to. Empty disables the net. */
   FORWARD_TO: string;
+  /** "all" (default) | "inbox" — skip quarantine | "off". */
+  FORWARD_MODE?: string;
 
   /** Cloudflare Access team domain, e.g. "yourteam.cloudflareaccess.com". */
   ACCESS_TEAM_DOMAIN: string;

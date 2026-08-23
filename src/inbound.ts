@@ -1,4 +1,5 @@
 import { chooseFolder, parseInboxAddresses, r2KeyFor } from "./headers";
+import { getSender } from "./senders";
 import type { Env, Folder } from "./types";
 
 /**
@@ -178,6 +179,123 @@ export async function ingest(env: Env, emailId: string, meta: Record<string, unk
   // separately and put them in our own bucket, or "your mail lives in your
   // own storage" would only be true of the text.
   await storeAttachments(env, emailId, receivedMs);
+
+  // Deliberately last, and deliberately not fatal. A message that is stored
+  // but not forwarded is recoverable; one that blocked ingest because the
+  // forward failed would not be.
+  try {
+    await forwardToMailbox(env, { emailId, email, headers, envelopeFrom, envelopeTo, folder });
+  } catch (err) {
+    console.error("postern: forward failed", emailId, err);
+  }
+}
+
+/** Inline attachments only up to this, in total, per forward. */
+const FORWARD_ATTACH_BUDGET = 1024 * 1024;
+
+/**
+ * Forward every message on to your existing mailbox.
+ *
+ * This is the safety net that Cloudflare Email Routing used to provide for
+ * free and that moving inbound to Resend removed. Without it, Postern is
+ * something you must remember to check; with it, Postern is somewhere your
+ * mail is stored and Gmail still tells you it arrived.
+ *
+ * Reply-To is set to the original sender, so replying from Gmail reaches the
+ * person who wrote to you rather than bouncing off your own address.
+ */
+async function forwardToMailbox(
+  env: Env,
+  ctx: {
+    emailId: string;
+    email: ReceivedEmail;
+    headers: Record<string, string>;
+    envelopeFrom: string;
+    envelopeTo: string;
+    folder: Folder;
+  },
+): Promise<void> {
+  const mode = (env.FORWARD_MODE ?? "all").toLowerCase();
+  if (!env.FORWARD_TO || mode === "off") return;
+  if (mode === "inbox" && ctx.folder !== "inbox") return;
+
+  const originalFrom = ctx.headers["from"] ?? ctx.envelopeFrom;
+  const replyTo = extractAddress(originalFrom) || ctx.envelopeFrom;
+  const subject = ctx.email.subject ?? ctx.headers["subject"] ?? "(no subject)";
+  const prefix = ctx.folder === "quarantine" ? "[quarantine] " : "";
+
+  const { attachments, omitted } = await collectAttachments(env, ctx.emailId);
+
+  const trailer = [
+    "",
+    "—",
+    `Forwarded by Postern · from ${originalFrom} · to ${ctx.envelopeTo}`,
+    omitted.length ? `Not attached (too large): ${omitted.join(", ")}` : "",
+    `https://mail.amirsalmani.com`,
+  ].filter(Boolean).join("\n");
+
+  await getSender(env).send({
+    // The From must stay on our own verified domain — forging the original
+    // sender's address would fail DMARC and land the forward in spam.
+    from: env.SEND_NAME ? `${env.SEND_NAME} <${env.SEND_FROM}>` : env.SEND_FROM,
+    to: [env.FORWARD_TO],
+    replyTo,
+    subject: `${prefix}${subject}`,
+    text: `${ctx.email.text ?? ""}${trailer}`,
+    html: ctx.email.html
+      ? `${ctx.email.html}<hr><p style="font:12px sans-serif;color:#888">${escapeHtml(trailer).replace(/\n/g, "<br>")}</p>`
+      : undefined,
+    attachments: attachments.length ? attachments : undefined,
+    headers: {
+      "X-Mailbox-Copy": "forward",
+      "X-Original-From": originalFrom.slice(0, 200),
+      "X-Original-To": ctx.envelopeTo.slice(0, 200),
+    },
+  });
+}
+
+/**
+ * Attachments are re-encoded to base64 here, which is the one genuinely
+ * CPU-bound step in this Worker — so it is capped. Anything over budget is
+ * named in the trailer and stays one click away in Postern rather than
+ * risking the free plan's 10ms limit on every forward.
+ */
+async function collectAttachments(
+  env: Env,
+  emailId: string,
+): Promise<{ attachments: Array<{ filename: string; content: string }>; omitted: string[] }> {
+  const attachments: Array<{ filename: string; content: string }> = [];
+  const omitted: string[] = [];
+
+  const { results } = await env.DB.prepare(
+    `SELECT filename, size_bytes, r2_key FROM attachments WHERE message_id = ?`,
+  ).bind(emailId).all();
+
+  let budget = FORWARD_ATTACH_BUDGET;
+  for (const row of (results ?? []) as Array<{ filename: string; size_bytes: number; r2_key: string }>) {
+    const size = row.size_bytes ?? 0;
+    if (size > budget) { omitted.push(row.filename || "attachment"); continue; }
+
+    const object = await env.RAW.get(row.r2_key);
+    if (!object) { omitted.push(row.filename || "attachment"); continue; }
+
+    const bytes = new Uint8Array(await object.arrayBuffer());
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    attachments.push({ filename: row.filename || "attachment", content: btoa(binary) });
+    budget -= size;
+  }
+
+  return { attachments, omitted };
+}
+
+function extractAddress(header: string): string {
+  const angled = header.match(/<([^>]+)>/);
+  return (angled ? angled[1] : header).trim();
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
 }
 
 async function storeAttachments(env: Env, emailId: string, receivedMs: number): Promise<void> {

@@ -27,6 +27,8 @@ export function resendSender(apiKey: string): Sender {
           from: message.from,
           to: message.to,
           bcc: message.bcc,
+          reply_to: message.replyTo,
+          attachments: message.attachments,
           subject: message.subject,
           text: message.text,
           html: message.html,
