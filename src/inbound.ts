@@ -1,4 +1,4 @@
-import { chooseFolder, parseInboxAddresses, r2KeyFor } from "./headers";
+import { applyRule, chooseFolder, parseInboxAddresses, r2KeyFor } from "./headers";
 import { getSender } from "./senders";
 import type { Env, Folder } from "./types";
 
@@ -122,10 +122,16 @@ export async function ingest(env: Env, emailId: string, meta: Record<string, unk
   const envelopeFrom = email.from ?? String(meta.from ?? "");
   const messageId = headers["message-id"] ?? (typeof meta.message_id === "string" ? meta.message_id : null);
 
-  const folder: Folder = chooseFolder(
-    envelopeTo,
-    parseInboxAddresses(env.INBOX_ADDRESSES),
-    { spf: null, dkim: null, dmarc: null },
+  const { results: ruleRows } = await env.DB.prepare(
+    `SELECT kind, pattern, action FROM rules`,
+  ).all();
+
+  const folder: Folder = applyRule(
+    (ruleRows ?? []) as Array<{ kind: string; pattern: string; action: string }>,
+    envelopeFrom,
+    chooseFolder(envelopeTo, parseInboxAddresses(env.INBOX_ADDRESSES), {
+      spf: null, dkim: null, dmarc: null,
+    }),
   );
 
   const eml = buildEml(email, headers);

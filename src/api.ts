@@ -48,6 +48,12 @@ export async function handleApi(request: Request, env: Env, url: URL): Promise<R
     return thread(env, segments[1]);
   }
 
+  if (segments[0] === "rules") {
+    if (request.method === "GET") return listRules(env);
+    if (request.method === "POST") return createRule(request, env);
+    if (segments[1] && request.method === "DELETE") return deleteRule(env, segments[1]);
+  }
+
   if (segments[0] === "identities" && request.method === "GET") {
     return json({ identities: identities(env), name: env.SEND_NAME });
   }
@@ -414,6 +420,59 @@ async function backfill(env: Env): Promise<Response> {
   } catch (err) {
     return json({ error: (err as Error).message }, 502);
   }
+}
+
+const RULE_ACTIONS = ["inbox", "quarantine", "trash"];
+
+async function listRules(env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare(
+    `SELECT id, kind, pattern, action, created_ms FROM rules ORDER BY created_ms DESC`,
+  ).all();
+  return json({ rules: results ?? [] });
+}
+
+/**
+ * Creating a rule also applies it to mail already received, so blocking a
+ * sender clears the backlog you were blocking them for. A rule that only
+ * affected future mail would leave you deleting the same twelve messages by
+ * hand anyway.
+ */
+async function createRule(request: Request, env: Env): Promise<Response> {
+  let body: { kind?: string; pattern?: string; action?: string };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return json({ error: "invalid JSON" }, 400);
+  }
+
+  const kind = body.kind === "domain" ? "domain" : "sender";
+  const pattern = (body.pattern ?? "").trim().toLowerCase();
+  const action = body.action ?? "";
+  if (!pattern) return json({ error: "pattern is required" }, 400);
+  if (!RULE_ACTIONS.includes(action)) return json({ error: "unknown action" }, 400);
+
+  const id = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO rules (id, kind, pattern, action, created_ms) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (kind, pattern) DO UPDATE SET action = excluded.action`,
+  )
+    .bind(id, kind, pattern, action, Date.now())
+    .run();
+
+  const match = kind === "domain" ? `%@${pattern}` : pattern;
+  const applied = await env.DB.prepare(
+    `UPDATE messages SET folder = ?, trashed_ms = ?
+      WHERE folder != 'sent' AND folder != ? AND lower(envelope_from) LIKE ?`,
+  )
+    .bind(action, action === "trash" ? Date.now() : null, action, match)
+    .run();
+
+  return json({ ok: true, id, applied: applied.meta.changes ?? 0 });
+}
+
+async function deleteRule(env: Env, id: string): Promise<Response> {
+  await env.DB.prepare(`DELETE FROM rules WHERE id = ?`).bind(id).run();
+  return json({ ok: true });
 }
 
 /** Every address you're permitted to send as, default first. */

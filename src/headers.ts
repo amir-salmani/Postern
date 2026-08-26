@@ -55,3 +55,23 @@ export function parseDateHeader(raw: string | null): number | null {
   const ms = Date.parse(raw);
   return Number.isNaN(ms) ? null : ms;
 }
+
+/**
+ * A sender rule overrides the address-based default.
+ *
+ * An exact address beats its domain, so "quarantine everything from
+ * example.com except sales@" is expressible — the common case for a vendor
+ * that sends both notifications and real correspondence.
+ */
+export function applyRule(
+  rules: Array<{ kind: string; pattern: string; action: string }>,
+  sender: string,
+  fallback: Folder,
+): Folder {
+  const address = sender.toLowerCase().trim();
+  const domain = address.split("@")[1] ?? "";
+  const exact = rules.find((r) => r.kind === "sender" && r.pattern === address);
+  const byDomain = rules.find((r) => r.kind === "domain" && r.pattern === domain);
+  const match = exact ?? byDomain;
+  return (match?.action as Folder) ?? fallback;
+}

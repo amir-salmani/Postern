@@ -522,6 +522,11 @@ main { display: grid; grid-template-rows: auto 1fr; min-width: 0; min-height: 0;
   gap: 14px;
 }
 
+/* In a scrolling flex column, children shrink to fit by default — which
+   squashed the meters and cut the chart's baseline off. They should overflow
+   and be scrolled to instead. */
+.kpis, .card { flex: none; }
+
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 
 .kpi {
@@ -584,7 +589,7 @@ main { display: grid; grid-template-rows: auto 1fr; min-width: 0; min-height: 0;
 .meter-sub i { width: 8px; height: 8px; border-radius: 2px; display: block; }
 
 .chart { padding: 8px 12px 12px; position: relative; }
-.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart svg { display: block; width: 100%; overflow: visible; }
 .chart .grid line { stroke: var(--line); stroke-width: 1; }
 .chart .axis { fill: var(--ink-3); font-size: 10px; font-family: var(--mono); }
 .chart rect.bar { transition: opacity var(--fast); }

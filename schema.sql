@@ -84,3 +84,15 @@ CREATE TABLE IF NOT EXISTS tombstones (
   id         TEXT PRIMARY KEY,
   deleted_ms INTEGER NOT NULL
 );
+
+-- Sender rules, applied at ingest. An address rule beats a domain rule, so
+-- you can silence a whole domain and still let one address through it.
+CREATE TABLE IF NOT EXISTS rules (
+  id         TEXT PRIMARY KEY,
+  kind       TEXT NOT NULL,   -- 'sender' (full address) | 'domain'
+  pattern    TEXT NOT NULL,   -- lowercased
+  action     TEXT NOT NULL,   -- 'inbox' | 'quarantine' | 'trash'
+  created_ms INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rules_pattern ON rules (kind, pattern);

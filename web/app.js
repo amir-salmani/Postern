@@ -27,6 +27,7 @@ const state = {
   compose: null,
   picked: new Set(),
   identities: [],
+  series: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -84,6 +85,8 @@ async function loadFolder(folder, { append = false } = {}) {
   el("view-title").textContent = state.query ? "Search" : TITLES[state.folder];
   const inTrash = state.folder === "trash";
   el("bulk-restore").classList.toggle("hidden", !inTrash);
+  el("bulk-inbox").classList.toggle("hidden", state.folder !== "quarantine");
+  el("bulk-quarantine").classList.toggle("hidden", state.folder !== "inbox");
   el("bulk-delete").textContent = inTrash ? "Delete forever" : "Delete";
   el("list-status").textContent = "Loading…";
 
@@ -269,8 +272,13 @@ async function openMessage(message) {
     li.classList.toggle("selected", li.dataset.id === message.id);
   });
 
-  el("restore").classList.toggle("hidden", message.folder !== "trash");
-  el("reply").classList.toggle("hidden", message.folder === "trash");
+  const where = message.folder;
+  el("restore").classList.toggle("hidden", where !== "trash");
+  el("reply").classList.toggle("hidden", where === "trash");
+  el("to-inbox").classList.toggle("hidden", where !== "quarantine");
+  el("to-quarantine").classList.toggle("hidden", where !== "inbox");
+  el("allow-sender").classList.toggle("hidden", where !== "quarantine");
+  el("block-sender").classList.toggle("hidden", where === "trash" || where === "sent");
   renderThread(message);
 
   try {
@@ -476,6 +484,7 @@ async function loadEvents() {
   renderMeters(overview.quota);
   renderChart(overview.series);
   renderEventLog(activity.events);
+  loadRules();
 }
 
 function showMail() {
@@ -565,10 +574,15 @@ function renderMeters(quota) {
  * the same baseline rather than stacked on a moving one.
  */
 function renderChart(series) {
+  state.series = series;
   const host = el("chart");
   host.replaceChildren();
 
-  const W = 720, H = 168, padL = 26, padR = 6, padB = 20, padT = 8;
+  // Measured, not scaled. A fixed viewBox stretched to the container makes
+  // 10px axis type render at 17px on a wide screen and forces the box taller
+  // than it needs to be.
+  const W = Math.max(320, host.clientWidth || 720);
+  const H = 190, padL = 30, padR = 8, padB = 22, padT = 10;
   const peak = Math.max(1, ...series.map((d) => Math.max(d.received, d.sent)));
   const ticks = niceTicks(peak);
   const top = ticks[ticks.length - 1];
@@ -579,6 +593,7 @@ function renderChart(series) {
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("height", H);
   svg.setAttribute("role", "img");
   svg.setAttribute("aria-label", "Mail received and sent per day, last 14 days");
 
@@ -641,8 +656,7 @@ function renderChart(series) {
         row.append(swatch, document.createTextNode(`${value} ${key}`));
         tooltip.append(row);
       }
-      const ratio = (padL + i * slot + slot / 2) / W;
-      tooltip.style.left = `${Math.min(Math.max(ratio * host.clientWidth, 60), host.clientWidth - 60)}px`;
+      tooltip.style.left = `${Math.min(Math.max(x0, 70), W - 70)}px`;
       tooltip.style.transform = "translate(-50%, -100%)";
       tooltip.style.top = "18px";
       tooltip.classList.add("on");
@@ -838,12 +852,20 @@ function escapeHtml(value) {
  * chrome, away from where you clicked, and its default button varies by
  * platform — Enter here always means the action you asked for.
  */
-function confirmDialog({ title, text, action = "Delete" }) {
+/**
+ * Resolves to false, true, or — when `extra` is given — that option's value,
+ * so a caller can offer a wider variant of the same action without a second
+ * dialog. Enter takes the primary action; Escape and the backdrop cancel.
+ */
+function confirmDialog({ title, text, action = "Delete", extra = null }) {
   return new Promise((resolve) => {
     const backdrop = el("dialog");
     el("dialog-title").textContent = title;
     el("dialog-text").textContent = text;
     el("dialog-ok").textContent = action;
+    const extraBtn = el("dialog-extra");
+    extraBtn.classList.toggle("hidden", !extra);
+    if (extra) extraBtn.textContent = extra.label;
     backdrop.classList.remove("hidden");
     el("dialog-ok").focus();
 
@@ -851,11 +873,13 @@ function confirmDialog({ title, text, action = "Delete" }) {
       backdrop.classList.add("hidden");
       el("dialog-ok").removeEventListener("click", onOk);
       el("dialog-cancel").removeEventListener("click", onCancel);
+      extraBtn.removeEventListener("click", onExtra);
       backdrop.removeEventListener("click", onBackdrop);
       document.removeEventListener("keydown", onKey, true);
       resolve(value);
     };
     const onOk = () => finish(true);
+    const onExtra = () => finish(extra.value);
     const onCancel = () => finish(false);
     const onBackdrop = (e) => { if (e.target === backdrop) finish(false); };
     const onKey = (e) => {
@@ -864,6 +888,7 @@ function confirmDialog({ title, text, action = "Delete" }) {
     };
 
     el("dialog-ok").addEventListener("click", onOk);
+    extraBtn.addEventListener("click", onExtra);
     el("dialog-cancel").addEventListener("click", onCancel);
     backdrop.addEventListener("click", onBackdrop);
     document.addEventListener("keydown", onKey, true);
@@ -944,6 +969,104 @@ el("restore").addEventListener("click", async () => {
 });
 
 el("bulk-restore").addEventListener("click", () => bulkPatch({ folder: "inbox" }));
+el("bulk-inbox").addEventListener("click", () => bulkPatch({ folder: "inbox" }));
+el("bulk-quarantine").addEventListener("click", () => bulkPatch({ folder: "quarantine" }));
+
+async function moveSelected(folder) {
+  const message = state.selected;
+  if (!message) return;
+  await api(`/messages/${message.id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folder }),
+  });
+  clearReader();
+  await loadFolder(state.folder);
+  loadCounts();
+}
+
+el("to-inbox").addEventListener("click", () => moveSelected("inbox"));
+el("to-quarantine").addEventListener("click", () => moveSelected("quarantine"));
+
+/**
+ * A rule is about the sender, so it is created from a message rather than
+ * from a settings screen — the moment you decide is the moment you are
+ * looking at the mail that made you decide.
+ */
+async function ruleFor(message, action, label) {
+  const sender = (addressOf(message.header_from) || message.envelope_from || "").toLowerCase();
+  if (!sender) return;
+  const domain = sender.split("@")[1] || "";
+
+  const scope = await confirmDialog({
+    title: `${label} ${sender}?`,
+    text: action === "inbox"
+      ? "Mail from this sender will go straight to your inbox, including anything already quarantined."
+      : `Mail from this sender will be ${action === "trash" ? "moved to Trash" : "quarantined"} on arrival, and anything already received will be moved now.`,
+    action: label,
+    extra: domain ? { label: `Whole domain (@${domain})`, value: "domain" } : null,
+  });
+  if (!scope) return;
+
+  const result = await (await api("/rules", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      kind: scope === "domain" ? "domain" : "sender",
+      pattern: scope === "domain" ? domain : sender,
+      action,
+    }),
+  })).json();
+
+  clearReader();
+  await loadFolder(state.folder);
+  loadCounts();
+  el("list-status").textContent = result.applied
+    ? `Rule added · ${result.applied} existing message${result.applied === 1 ? "" : "s"} moved`
+    : "Rule added";
+}
+
+el("block-sender").addEventListener("click", () =>
+  state.selected && ruleFor(state.selected, "trash", "Block"));
+el("allow-sender").addEventListener("click", () =>
+  state.selected && ruleFor(state.selected, "inbox", "Always allow"));
+
+async function loadRules() {
+  try {
+    const { rules } = await (await api("/rules")).json();
+    const host = el("rules");
+    host.replaceChildren(...rules.map((rule) => {
+      const item = document.createElement("li");
+      const type = document.createElement("span");
+      type.className = "type";
+      const dot = document.createElement("i");
+      dot.className = "dot";
+      dot.style.background = rule.action === "inbox" ? SERIES.sent : "#c0392b";
+      type.append(dot, document.createTextNode(rule.action));
+
+      const what = document.createElement("span");
+      what.className = "what";
+      what.textContent = `${rule.kind === "domain" ? "@" : ""}${rule.pattern}`;
+
+      const remove = document.createElement("button");
+      remove.className = "quiet";
+      remove.textContent = "Remove";
+      remove.addEventListener("click", async () => {
+        await api(`/rules/${rule.id}`, { method: "DELETE" });
+        loadRules();
+      });
+
+      item.append(type, what, remove);
+      return item;
+    }));
+    if (!rules.length) {
+      const empty = document.createElement("li");
+      empty.className = "what";
+      empty.textContent = "No rules yet. Use Block or Allow sender on a message.";
+      host.append(empty);
+    }
+  } catch { /* rules are additive; never block the dashboard on them */ }
+}
 el("bulk-read").addEventListener("click", () => bulkPatch({ seen: true }));
 el("bulk-unread").addEventListener("click", () => bulkPatch({ seen: false }));
 
