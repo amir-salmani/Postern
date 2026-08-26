@@ -31,6 +31,32 @@ const state = {
 };
 
 const el = (id) => document.getElementById(id);
+
+let toastTimer;
+function toast(message, ok = true) {
+  const node = el("toast");
+  node.textContent = message;
+  node.classList.toggle("bad", !ok);
+  node.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => node.classList.remove("on"), 4200);
+}
+
+/**
+ * Wraps a click handler so a thrown error surfaces instead of dying inside
+ * the listener. A missing element used to take the whole action down with no
+ * trace anywhere the user could see.
+ */
+function guard(fn) {
+  return async (...args) => {
+    try {
+      await fn(...args);
+    } catch (err) {
+      console.error(err);
+      toast(err?.message || "Something went wrong", false);
+    }
+  };
+}
 const TITLES = { inbox: "Inbox", quarantine: "Quarantine", sent: "Sent", trash: "Trash", events: "Dashboard" };
 
 /**
@@ -864,8 +890,10 @@ function confirmDialog({ title, text, action = "Delete", extra = null }) {
     el("dialog-text").textContent = text;
     el("dialog-ok").textContent = action;
     const extraBtn = el("dialog-extra");
-    extraBtn.classList.toggle("hidden", !extra);
-    if (extra) extraBtn.textContent = extra.label;
+    if (extraBtn) {
+      extraBtn.classList.toggle("hidden", !extra);
+      if (extra) extraBtn.textContent = extra.label;
+    }
     backdrop.classList.remove("hidden");
     el("dialog-ok").focus();
 
@@ -873,13 +901,13 @@ function confirmDialog({ title, text, action = "Delete", extra = null }) {
       backdrop.classList.add("hidden");
       el("dialog-ok").removeEventListener("click", onOk);
       el("dialog-cancel").removeEventListener("click", onCancel);
-      extraBtn.removeEventListener("click", onExtra);
+      extraBtn?.removeEventListener("click", onExtra);
       backdrop.removeEventListener("click", onBackdrop);
       document.removeEventListener("keydown", onKey, true);
       resolve(value);
     };
     const onOk = () => finish(true);
-    const onExtra = () => finish(extra.value);
+    const onExtra = () => finish(extra?.value ?? true);
     const onCancel = () => finish(false);
     const onBackdrop = (e) => { if (e.target === backdrop) finish(false); };
     const onKey = (e) => {
@@ -888,7 +916,7 @@ function confirmDialog({ title, text, action = "Delete", extra = null }) {
     };
 
     el("dialog-ok").addEventListener("click", onOk);
-    extraBtn.addEventListener("click", onExtra);
+    extraBtn?.addEventListener("click", onExtra);
     el("dialog-cancel").addEventListener("click", onCancel);
     backdrop.addEventListener("click", onBackdrop);
     document.addEventListener("keydown", onKey, true);
@@ -955,7 +983,7 @@ el("select-all").addEventListener("change", (e) => {
   renderBulkBar();
 });
 
-el("restore").addEventListener("click", async () => {
+el("restore").addEventListener("click", guard(async () => {
   const message = state.selected;
   if (!message) return;
   await api(`/messages/${message.id}`, {
@@ -966,7 +994,8 @@ el("restore").addEventListener("click", async () => {
   clearReader();
   await loadFolder(state.folder);
   loadCounts();
-});
+  toast("Restored to Inbox.");
+}));
 
 el("bulk-restore").addEventListener("click", () => bulkPatch({ folder: "inbox" }));
 el("bulk-inbox").addEventListener("click", () => bulkPatch({ folder: "inbox" }));
@@ -983,10 +1012,11 @@ async function moveSelected(folder) {
   clearReader();
   await loadFolder(state.folder);
   loadCounts();
+  toast(`Moved to ${folder === "inbox" ? "Inbox" : "Quarantine"}.`);
 }
 
-el("to-inbox").addEventListener("click", () => moveSelected("inbox"));
-el("to-quarantine").addEventListener("click", () => moveSelected("quarantine"));
+el("to-inbox").addEventListener("click", guard(() => moveSelected("inbox")));
+el("to-quarantine").addEventListener("click", guard(() => moveSelected("quarantine")));
 
 /**
  * A rule is about the sender, so it is created from a message rather than
@@ -1021,15 +1051,16 @@ async function ruleFor(message, action, label) {
   clearReader();
   await loadFolder(state.folder);
   loadCounts();
-  el("list-status").textContent = result.applied
-    ? `Rule added · ${result.applied} existing message${result.applied === 1 ? "" : "s"} moved`
-    : "Rule added";
+  const target = action === "inbox" ? "Inbox" : action === "trash" ? "Trash" : "Quarantine";
+  toast(result.applied
+    ? `Rule saved — mail from ${scope === "domain" ? "@" + domain : sender} now goes to ${target}. ${result.applied} existing message${result.applied === 1 ? "" : "s"} moved.`
+    : `Rule saved — mail from ${scope === "domain" ? "@" + domain : sender} now goes to ${target}.`);
 }
 
-el("block-sender").addEventListener("click", () =>
-  state.selected && ruleFor(state.selected, "trash", "Block"));
-el("allow-sender").addEventListener("click", () =>
-  state.selected && ruleFor(state.selected, "inbox", "Always allow"));
+el("block-sender").addEventListener("click", guard(() =>
+  state.selected && ruleFor(state.selected, "trash", "Block")));
+el("allow-sender").addEventListener("click", guard(() =>
+  state.selected && ruleFor(state.selected, "inbox", "Always allow")));
 
 async function loadRules() {
   try {
