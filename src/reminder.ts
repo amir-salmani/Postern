@@ -26,7 +26,85 @@ export async function handleScheduled(env: Env): Promise<void> {
     console.error("postern: scheduled fetch failed", err);
   }
   await purgeExpiredTrash(env);
+  await drainUnforwarded(env);
   await remindUnread(env);
+}
+
+/** Paced so a burst can't trip Resend's per-second limit. */
+const FORWARD_BATCH = 12;
+
+/**
+ * Deliver anything that was stored but never forwarded.
+ *
+ * A forward can fail for reasons that have nothing to do with the message —
+ * a bad deploy, a spent allowance, an API blip. Without a sweep, that mail is
+ * simply never seen again, because nothing else ever revisits it. This makes
+ * the safety net self-healing rather than best-effort at ingest time.
+ */
+async function drainUnforwarded(env: Env): Promise<void> {
+  if (!env.FORWARD_TO || (env.FORWARD_MODE ?? "all").toLowerCase() === "off") return;
+
+  const { results } = await env.DB.prepare(
+    `SELECT id FROM messages
+      WHERE forwarded_ms IS NULL AND folder IN ('inbox', 'quarantine')
+      ORDER BY received_ms ASC
+      LIMIT ?`,
+  )
+    .bind(FORWARD_BATCH)
+    .all();
+
+  const pending = (results ?? []) as Array<{ id: string }>;
+  if (!pending.length) return;
+
+  let sent = 0;
+  for (const message of pending) {
+    try {
+      await forwardStored(env, message.id);
+      await env.DB.prepare(`UPDATE messages SET forwarded_ms = ? WHERE id = ?`)
+        .bind(Date.now(), message.id).run();
+      sent += 1;
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    } catch (err) {
+      // Leave the flag unset so the next run retries rather than losing it.
+      console.error("postern: drain forward failed", message.id, err);
+      break;
+    }
+  }
+  console.log(`postern: forwarded ${sent} previously unforwarded message(s)`);
+}
+
+/**
+ * Re-sends a stored message from R2 rather than re-fetching it from Resend,
+ * so this keeps working for anything past Resend's 30-day retention.
+ */
+async function forwardStored(env: Env, id: string): Promise<void> {
+  const row = await env.DB.prepare(
+    `SELECT r2_key, subject, header_from, envelope_from, envelope_to, folder
+       FROM messages WHERE id = ? LIMIT 1`,
+  )
+    .bind(id)
+    .first<{
+      r2_key: string; subject: string | null; header_from: string | null;
+      envelope_from: string; envelope_to: string; folder: string;
+    }>();
+  if (!row) return;
+
+  const object = await env.RAW.get(row.r2_key);
+  const raw = object ? await object.text() : "";
+  const body = raw.split(/\r?\n\r?\n/).slice(1).join("\n\n");
+
+  const originalFrom = row.header_from || row.envelope_from;
+  const replyTo = (originalFrom.match(/<([^>]+)>/)?.[1] ?? originalFrom).trim();
+  const prefix = row.folder === "quarantine" ? "[quarantine] " : "";
+
+  await getSender(env).send({
+    from: env.SEND_NAME ? `${env.SEND_NAME} <${env.SEND_FROM}>` : env.SEND_FROM,
+    to: [env.FORWARD_TO],
+    replyTo,
+    subject: `${prefix}${row.subject ?? "(no subject)"}`,
+    text: `${body}\n\n—\nForwarded by Postern · from ${originalFrom} · to ${row.envelope_to}\nhttps://mail.amirsalmani.com`,
+    headers: { "X-Mailbox-Copy": "forward" },
+  });
 }
 
 const TRASH_RETENTION_MS = 30 * 86_400_000;

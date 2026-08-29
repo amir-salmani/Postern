@@ -20,6 +20,10 @@ export interface BackfillResult {
  * Messages you deleted are skipped via the tombstone table. Without that,
  * every sync would restore them — Resend keeps its copy for 30 days and has
  * no idea you threw ours away.
+ *
+ * Imports forward like any other ingest. Anything backfill finds is mail that
+ * never reached you, which is precisely what forwarding is for; duplicates are
+ * prevented by the per-message forwarded_ms flag, not by skipping the send.
  */
 export async function runBackfill(env: Env): Promise<BackfillResult> {
   const result: BackfillResult = { imported: 0, skipped: 0, tombstoned: 0, failed: [] };
@@ -41,7 +45,7 @@ export async function runBackfill(env: Env): Promise<BackfillResult> {
     if (existing) { result.skipped += 1; continue; }
 
     try {
-      await ingest(env, item.id, {}, { forward: false });
+      await ingest(env, item.id);
       result.imported += 1;
     } catch (err) {
       console.error("postern: backfill failed for", item.id, err);

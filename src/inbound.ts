@@ -118,7 +118,10 @@ export async function ingest(
   }
   const email = (await response.json()) as ReceivedEmail;
 
-  const receivedMs = Date.now();
+  // Resend's created_at is when the message actually arrived. Using Date.now()
+  // here stamped a batch import with the time of the import, which reordered
+  // the mailbox and told the unread reminder everything had just landed.
+  const receivedMs = Date.parse(email.created_at ?? "") || Date.now();
   const r2Key = r2KeyFor(emailId, receivedMs);
   const headers = normaliseHeaders(email.headers);
 
@@ -194,13 +197,16 @@ export async function ingest(
   // Deliberately last, and deliberately not fatal. A message that is stored
   // but not forwarded is recoverable; one that blocked ingest because the
   // forward failed would not be.
-  // Only live webhook delivery forwards. Backfill is a manual import, and
-  // re-forwarding an archive would flood the mailbox it is meant to protect
-  // and spend the daily allowance doing it. Resend retries webhooks itself,
-  // so backfill is a safety net rather than a delivery path.
+  // Forward once per message, tracked on the message itself rather than
+  // decided by which path ingested it. Gating on the path was wrong: mail
+  // recovered by backfill is mail you have never seen, and suppressing its
+  // forward is exactly the case the safety net exists for. The flag makes a
+  // re-sync idempotent without making recovery silent.
   if (options.forward !== false) {
     try {
       await forwardToMailbox(env, { emailId, email, headers, envelopeFrom, envelopeTo, folder });
+      await env.DB.prepare(`UPDATE messages SET forwarded_ms = ? WHERE id = ?`)
+        .bind(Date.now(), emailId).run();
     } catch (err) {
       console.error("postern: forward failed", emailId, err);
     }
