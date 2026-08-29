@@ -68,9 +68,18 @@ const TITLES = { inbox: "Inbox", quarantine: "Quarantine", sent: "Sent", trash: 
 const SERIES = { received: "#D9622B", sent: "#00A3C4" };
 
 async function api(path, options) {
-  const response = await fetch(`/api${path}`, options);
-  if (response.status === 401 || response.status === 302) {
-    throw new Error("Session expired — reload the page to sign in again.");
+  let response;
+  try {
+    // Access answers an expired session with a cross-origin redirect to its
+    // login page. Following it fails CORS and surfaces as a bare
+    // "NetworkError", which says nothing useful — so catch the redirect
+    // ourselves and name the real cause.
+    response = await fetch(`/api${path}`, { redirect: "manual", ...options });
+  } catch {
+    throw new Error("Signed out — reload the page to sign in again.");
+  }
+  if (response.type === "opaqueredirect" || response.status === 401 || response.status === 302) {
+    throw new Error("Signed out — reload the page to sign in again.");
   }
   if (!response.ok) {
     const detail = await response.json().catch(() => ({}));
@@ -812,6 +821,7 @@ async function submitCompose(event) {
   try {
     const response = await fetch("/api/send", {
       method: "POST",
+      redirect: "manual",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         from: el("c-from").value || null,
@@ -823,6 +833,9 @@ async function submitCompose(event) {
         threadId: state.compose?.threadId ?? null,
       }),
     });
+    if (response.type === "opaqueredirect") {
+      throw new Error("Signed out — reload the page and send again.");
+    }
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || `Send failed (${response.status})`);
 
@@ -831,6 +844,7 @@ async function submitCompose(event) {
     loadCounts();
   } catch (err) {
     el("c-status").textContent = err.message;
+    toast(err.message, false);
   } finally {
     button.disabled = false;
   }
@@ -1151,7 +1165,9 @@ el("sync").addEventListener("click", async () => {
     const parts = [];
     if (result.imported) parts.push(`${result.imported} new`);
     if (result.tombstoned) parts.push(`${result.tombstoned} previously deleted, left alone`);
-    if (result.failed?.length) parts.push(`${result.failed.length} failed`);
+    if (result.failed?.length) {
+      parts.push(`${result.failed.length} failed${result.error ? ` (${result.error})` : ""}`);
+    }
     el("list-status").textContent = parts.length
       ? parts.join(" · ")
       : (state.messages.length ? "" : "Nothing here.");

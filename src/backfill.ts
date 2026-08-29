@@ -6,6 +6,8 @@ export interface BackfillResult {
   skipped: number;
   tombstoned: number;
   failed: string[];
+  /** First failure reason, so a count like "14 failed" is diagnosable. */
+  error?: string;
 }
 
 /**
@@ -39,11 +41,12 @@ export async function runBackfill(env: Env): Promise<BackfillResult> {
     if (existing) { result.skipped += 1; continue; }
 
     try {
-      await ingest(env, item.id);
+      await ingest(env, item.id, {}, { forward: false });
       result.imported += 1;
     } catch (err) {
       console.error("postern: backfill failed for", item.id, err);
       result.failed.push(item.id);
+      result.error ??= (err as Error).message;
     }
   }
 

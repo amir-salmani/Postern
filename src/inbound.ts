@@ -102,7 +102,12 @@ interface ReceivedEmail {
   created_at?: string;
 }
 
-export async function ingest(env: Env, emailId: string, meta: Record<string, unknown> = {}): Promise<void> {
+export async function ingest(
+  env: Env,
+  emailId: string,
+  meta: Record<string, unknown> = {},
+  options: { forward?: boolean } = {},
+): Promise<void> {
   if (!env.RESEND_API_KEY) throw new Error("RESEND_API_KEY is unset");
 
   const response = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
@@ -189,10 +194,16 @@ export async function ingest(env: Env, emailId: string, meta: Record<string, unk
   // Deliberately last, and deliberately not fatal. A message that is stored
   // but not forwarded is recoverable; one that blocked ingest because the
   // forward failed would not be.
-  try {
-    await forwardToMailbox(env, { emailId, email, headers, envelopeFrom, envelopeTo, folder });
-  } catch (err) {
-    console.error("postern: forward failed", emailId, err);
+  // Only live webhook delivery forwards. Backfill is a manual import, and
+  // re-forwarding an archive would flood the mailbox it is meant to protect
+  // and spend the daily allowance doing it. Resend retries webhooks itself,
+  // so backfill is a safety net rather than a delivery path.
+  if (options.forward !== false) {
+    try {
+      await forwardToMailbox(env, { emailId, email, headers, envelopeFrom, envelopeTo, folder });
+    } catch (err) {
+      console.error("postern: forward failed", emailId, err);
+    }
   }
 }
 
