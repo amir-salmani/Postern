@@ -1,4 +1,5 @@
 import { applyRule, chooseFolder, parseInboxAddresses, r2KeyFor } from "./headers";
+import { maybeAutoReply } from "./autoreply";
 import { getSender } from "./senders";
 import type { Env, Folder } from "./types";
 
@@ -202,6 +203,20 @@ export async function ingest(
   // recovered by backfill is mail you have never seen, and suppressing its
   // forward is exactly the case the safety net exists for. The flag makes a
   // re-sync idempotent without making recovery silent.
+  // Only real inbox mail gets an answer. Quarantine is, by definition, mail
+  // we are not sure we wanted.
+  if (folder === "inbox") {
+    try {
+      await maybeAutoReply(env, {
+        envelopeFrom, envelopeTo, headers,
+        subject: email.subject ?? headers["subject"] ?? "your message",
+        messageId, references: refs,
+      });
+    } catch (err) {
+      console.error("postern: auto-reply failed", emailId, err);
+    }
+  }
+
   if (options.forward !== false) {
     try {
       await forwardToMailbox(env, { emailId, email, headers, envelopeFrom, envelopeTo, folder });

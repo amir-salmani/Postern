@@ -7,6 +7,12 @@ quarantine routing, full-text search over bodies, tombstoned deletes that
 survive sync, Trash with a 30-day purge, attachment capture, always-forward
 to Gmail, the dashboard, and the unread reminder.
 
+## Done since first draft
+
+Threading, inbound attachments, FTS5 search, Trash with a 30-day purge,
+sender rules, quarantine moves, signatures, out-of-hours auto-reply, daily
+backups to R2, and versioned migrations.
+
 ## Worth doing next
 
 **Rules / filters.** The strongest signal from real use: six of the first

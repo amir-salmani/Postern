@@ -55,7 +55,14 @@
   "assets": { "directory": "./web" },
 
   "d1_databases": [
-    { "binding": "DB", "database_name": "postern", "database_id": "e32fa224-dac0-4562-b33b-98d6ac8f6dba" }
+    {
+      "binding": "DB",
+      "database_name": "postern",
+      "database_id": "e32fa224-dac0-4562-b33b-98d6ac8f6dba",
+      // Versioned migrations, tracked by D1 itself. Ad-hoc ALTER TABLE is what
+      // let the rules table silently never exist while ingest depended on it.
+      "migrations_dir": "migrations"
+    }
   ],
 
   "r2_buckets": [

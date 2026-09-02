@@ -847,3 +847,31 @@ body.selecting .list li .avatar { display: none; }
 
 .toast.on { opacity: 1; transform: translate(-50%, 0); }
 .toast.bad { border-color: var(--accent); }
+
+/* ───────── Settings ───────── */
+
+.settings { padding: 16px; display: grid; gap: 14px; }
+.field { display: grid; gap: 6px; }
+.field > span { font-size: 12px; color: var(--ink-3); }
+
+.field textarea, .field input {
+  padding: 9px 11px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  outline: none;
+  resize: vertical;
+}
+
+.field textarea { font-size: 13px; line-height: 1.6; }
+.field textarea:focus, .field input:focus { border-color: var(--accent); }
+
+.hours { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+.field.small > span { font-size: 11.5px; }
+
+.row-toggle { display: flex; align-items: center; gap: 9px; cursor: pointer; font-size: 13.5px; }
+.row-toggle input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+
+.settings-foot { display: flex; align-items: center; gap: 12px; }

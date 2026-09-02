@@ -101,6 +101,38 @@
       </section>
 
       <section class="card">
+        <header><h3>Settings</h3><span class="card-note">Saved to your database, no deploy needed</span></header>
+        <div class="settings">
+          <label class="field">
+            <span>Signature</span>
+            <textarea id="s-signature" rows="4" placeholder="Appended after a -- line on everything you send"></textarea>
+          </label>
+
+          <label class="row-toggle">
+            <input type="checkbox" id="s-ar-enabled">
+            <span>Auto-reply outside working hours</span>
+          </label>
+
+          <div class="hours">
+            <label class="field small"><span>From</span><input id="s-ar-start" type="number" min="0" max="23"></label>
+            <label class="field small"><span>To</span><input id="s-ar-end" type="number" min="0" max="23"></label>
+            <label class="field small"><span>Timezone</span><input id="s-ar-tz" type="text"></label>
+            <label class="field small"><span>Cooldown (h)</span><input id="s-ar-cool" type="number" min="1" max="168"></label>
+          </div>
+
+          <label class="field">
+            <span>Auto-reply message</span>
+            <textarea id="s-ar-message" rows="5"></textarea>
+          </label>
+
+          <div class="settings-foot">
+            <button id="s-save" class="primary">Save settings</button>
+            <span id="s-status" class="hint"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
         <header><h3>Sender rules</h3><span class="card-note">Applied on arrival, and to mail already received</span></header>
         <ol id="rules" class="event-log"></ol>
       </section>

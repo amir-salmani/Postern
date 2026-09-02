@@ -520,6 +520,7 @@ async function loadEvents() {
   renderChart(overview.series);
   renderEventLog(activity.events);
   loadRules();
+  loadSettings();
 }
 
 function showMail() {
@@ -1075,6 +1076,44 @@ el("block-sender").addEventListener("click", guard(() =>
   state.selected && ruleFor(state.selected, "trash", "Block")));
 el("allow-sender").addEventListener("click", guard(() =>
   state.selected && ruleFor(state.selected, "inbox", "Always allow")));
+
+async function loadSettings() {
+  try {
+    const { settings } = await (await api("/settings")).json();
+    el("s-signature").value = settings["signature.default"] ?? "";
+    el("s-ar-enabled").checked = settings["autoreply.enabled"] === "true";
+    el("s-ar-start").value = settings["autoreply.start"] ?? "8";
+    el("s-ar-end").value = settings["autoreply.end"] ?? "20";
+    el("s-ar-tz").value = settings["autoreply.timezone"] ?? "Europe/Helsinki";
+    el("s-ar-cool").value = settings["autoreply.cooldown_hours"] ?? "24";
+    el("s-ar-message").value = settings["autoreply.message"] ?? "";
+  } catch { /* settings are additive; never block the dashboard */ }
+}
+
+el("s-save").addEventListener("click", guard(async () => {
+  const button = el("s-save");
+  button.disabled = true;
+  el("s-status").textContent = "Saving…";
+  try {
+    await api("/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        "signature.default": el("s-signature").value,
+        "autoreply.enabled": String(el("s-ar-enabled").checked),
+        "autoreply.start": el("s-ar-start").value,
+        "autoreply.end": el("s-ar-end").value,
+        "autoreply.timezone": el("s-ar-tz").value,
+        "autoreply.cooldown_hours": el("s-ar-cool").value,
+        "autoreply.message": el("s-ar-message").value,
+      }),
+    });
+    el("s-status").textContent = "";
+    toast("Settings saved.");
+  } finally {
+    button.disabled = false;
+  }
+}));
 
 async function loadRules() {
   try {

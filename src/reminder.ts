@@ -1,4 +1,5 @@
 import { runBackfill } from "./backfill";
+import { maybeBackup } from "./backup";
 import { getSender } from "./senders";
 import type { Env } from "./types";
 
@@ -25,6 +26,7 @@ export async function handleScheduled(env: Env): Promise<void> {
   } catch (err) {
     console.error("postern: scheduled fetch failed", err);
   }
+  await maybeBackup(env);
   await purgeExpiredTrash(env);
   await drainUnforwarded(env);
   await remindUnread(env);

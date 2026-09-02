@@ -1,6 +1,7 @@
 import { verifyAccess } from "./access";
 import { runBackfill } from "./backfill";
 import { getSender } from "./senders";
+import { readSettings, signatureFor, writeSettings } from "./settings";
 import type { Env, Folder } from "./types";
 
 const FOLDERS: Folder[] = ["inbox", "quarantine", "sent", "trash"];
@@ -46,6 +47,17 @@ export async function handleApi(request: Request, env: Env, url: URL): Promise<R
 
   if (segments[0] === "threads" && segments[1] && request.method === "GET") {
     return thread(env, segments[1]);
+  }
+
+  if (segments[0] === "settings") {
+    if (request.method === "GET") return json({ settings: await readSettings(env) });
+    if (request.method === "PUT") {
+      let body: Record<string, string>;
+      try { body = (await request.json()) as Record<string, string>; }
+      catch { return json({ error: "invalid JSON" }, 400); }
+      await writeSettings(env, body);
+      return json({ ok: true, settings: await readSettings(env) });
+    }
   }
 
   if (segments[0] === "rules") {
@@ -533,6 +545,12 @@ async function sendMessage(request: Request, env: Env): Promise<Response> {
   }
   const from = env.SEND_NAME ? `${env.SEND_NAME} <${address}>` : address;
 
+  // Appended here rather than in the composer, so it is applied consistently
+  // and cannot be half-deleted while typing.
+  const settings = await readSettings(env);
+  const signature = signatureFor(settings, address);
+  const signedText = signature ? `${text.replace(/\s+$/, "")}\n\n-- \n${signature}` : text;
+
   // References accumulates the whole chain; In-Reply-To names only the parent.
   const references = [body.references, body.inReplyTo].filter(Boolean).join(" ").trim();
 
@@ -545,7 +563,7 @@ async function sendMessage(request: Request, env: Env): Promise<Response> {
       // too. Tagged so it can be filtered out of the inbox there.
       bcc: env.FORWARD_TO ? [env.FORWARD_TO] : undefined,
       subject: subject || "(no subject)",
-      text,
+      text: signedText,
       inReplyTo: body.inReplyTo ?? undefined,
       references: references || undefined,
       headers: { "X-Mailbox-Copy": "sent" },
@@ -560,7 +578,7 @@ async function sendMessage(request: Request, env: Env): Promise<Response> {
       from,
       address,
       subject: subject || "(no subject)",
-      text,
+      text: signedText,
       messageId: result.messageId ? `<${result.messageId}@resend>` : null,
       inReplyTo: body.inReplyTo ?? null,
       references: references || null,
