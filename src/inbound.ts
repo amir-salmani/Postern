@@ -1,4 +1,23 @@
 import { applyRule, chooseFolder, parseInboxAddresses, r2KeyFor } from "./headers";
+
+/**
+ * Every address that reaches the Inbox.
+ *
+ * Anything you can send *from* has to be able to receive the reply. Keeping
+ * INBOX_ADDRESSES and SEND_ADDRESSES as independent lists meant sending from
+ * jobs@ quietly quarantined the answer, which is the worst possible place to
+ * put a reply you were waiting for.
+ */
+function inboxAddresses(env: Env): string[] {
+  const domain = env.MAIL_DOMAIN;
+  const local = (value: string) =>
+    value.split(",").map((p) => p.trim().toLowerCase().replace(`@${domain}`, "")).filter(Boolean);
+  return [
+    ...local(env.INBOX_ADDRESSES ?? ""),
+    ...local(env.SEND_ADDRESSES ?? ""),
+    ...local(env.SEND_FROM ?? ""),
+  ];
+}
 import { maybeAutoReply } from "./autoreply";
 import { getSender } from "./senders";
 import type { Env, Folder } from "./types";
@@ -138,7 +157,7 @@ export async function ingest(
   const folder: Folder = applyRule(
     (ruleRows ?? []) as Array<{ kind: string; pattern: string; action: string }>,
     envelopeFrom,
-    chooseFolder(envelopeTo, parseInboxAddresses(env.INBOX_ADDRESSES), {
+    chooseFolder(envelopeTo, inboxAddresses(env), {
       spf: null, dkim: null, dmarc: null,
     }),
   );

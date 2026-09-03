@@ -551,6 +551,11 @@ async function sendMessage(request: Request, env: Env): Promise<Response> {
   const signature = signatureFor(settings, address);
   const signedText = signature ? `${text.replace(/\s+$/, "")}\n\n-- \n${signature}` : text;
 
+  // The composer is plain text, but a plain-text-only message leaves
+  // "amirsalmani.com" as dead characters. Sending both parts keeps what you
+  // typed intact for text clients and gives everyone else working links.
+  const signedHtml = textToHtml(signedText);
+
   // References accumulates the whole chain; In-Reply-To names only the parent.
   const references = [body.references, body.inReplyTo].filter(Boolean).join(" ").trim();
 
@@ -564,6 +569,7 @@ async function sendMessage(request: Request, env: Env): Promise<Response> {
       bcc: env.FORWARD_TO ? [env.FORWARD_TO] : undefined,
       subject: subject || "(no subject)",
       text: signedText,
+      html: signedHtml,
       inReplyTo: body.inReplyTo ?? undefined,
       references: references || undefined,
       headers: { "X-Mailbox-Copy": "sent" },
@@ -642,6 +648,38 @@ async function storeSentCopy(
       now, now, eml.length,
     )
     .run();
+}
+
+/**
+ * Plain text to a safe HTML part.
+ *
+ * Escapes first and links second, tokenising rather than regex-replacing over
+ * escaped output — otherwise a URL containing & gets an href of &amp; and
+ * quietly breaks.
+ */
+function textToHtml(text: string): string {
+  const pattern = /((?:https?:\/\/|www\.)[^\s<>()"]+|[a-z0-9][a-z0-9-]*\.(?:com|fi|dev|io|net|org|co|app|me)(?:\/[^\s<>()"]*)?|[^\s<>()"]+@[a-z0-9.-]+\.[a-z]{2,})/gi;
+  let out = "";
+  let last = 0;
+  for (const match of text.matchAll(pattern)) {
+    const token = match[0];
+    const at = match.index ?? 0;
+    out += escapeHtml(text.slice(last, at));
+    const href = token.includes("@") && !token.includes("/")
+      ? `mailto:${token}`
+      : token.startsWith("http") ? token : `https://${token}`;
+    out += `<a href="${escapeHtml(href)}">${escapeHtml(token)}</a>`;
+    last = at + token.length;
+  }
+  out += escapeHtml(text.slice(last));
+
+  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.6;color:#212842;">${
+    out.replace(/\r?\n/g, "<br>")
+  }</div>`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
 }
 
 function json(body: unknown, status = 200): Response {
