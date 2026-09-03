@@ -545,11 +545,10 @@ async function sendMessage(request: Request, env: Env): Promise<Response> {
   }
   const from = env.SEND_NAME ? `${env.SEND_NAME} <${address}>` : address;
 
-  // Appended here rather than in the composer, so it is applied consistently
-  // and cannot be half-deleted while typing.
-  const settings = await readSettings(env);
-  const signature = signatureFor(settings, address);
-  const signedText = signature ? `${text.replace(/\s+$/, "")}\n\n-- \n${signature}` : text;
+  // The signature is inserted by the composer, not here. Appending invisibly
+  // meant you could not see what you were about to send — so you retyped it by
+  // hand and would have signed twice. Visible and editable beats consistent.
+  const signedText = text;
 
   // The composer is plain text, but a plain-text-only message leaves
   // "amirsalmani.com" as dead characters. Sending both parts keeps what you

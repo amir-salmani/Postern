@@ -28,6 +28,7 @@ const state = {
   picked: new Set(),
   identities: [],
   series: null,
+  settings: {},
 };
 
 const el = (id) => document.getElementById(id);
@@ -761,6 +762,20 @@ function renderEventLog(events) {
 
 /* ───────── Compose ───────── */
 
+/** Settings are needed at compose time, so fetch them once at startup too. */
+async function primeSettings() {
+  try {
+    const { settings } = await (await api("/settings")).json();
+    state.settings = settings;
+  } catch { /* compose still works, just unsigned */ }
+}
+
+function signatureBlock(address) {
+  const settings = state.settings || {};
+  const sig = settings[`signature.${(address || "").toLowerCase()}`] || settings["signature.default"];
+  return sig ? `\n\n-- \n${sig}` : "";
+}
+
 async function loadIdentities() {
   try {
     const { identities } = await (await api("/identities")).json();
@@ -782,14 +797,30 @@ function openCompose({ to = "", subject = "", inReplyTo = null, references = nul
   else if (state.identities.length) el("c-from").value = state.identities[0];
   el("c-to").value = to;
   el("c-subject").value = subject;
-  el("c-body").value = "";
+  // Pre-filled and editable, so what you see is what goes out. Cursor sits
+  // above it rather than at the end, which is where you actually type.
+  el("c-body").value = signatureBlock(el("c-from").value);
   el("c-status").textContent = "";
   document.body.classList.add("reading");
   el("reader").classList.add("hidden");
   el("reader-empty").classList.add("hidden");
   el("compose").classList.remove("hidden");
+  const box = el("c-body");
   el(to ? "c-body" : "c-to").focus();
+  box.setSelectionRange(0, 0);
+  box.scrollTop = 0;
 }
+
+// Swapping identity swaps its signature, but only the trailing block — never
+// anything you have already written.
+el("c-from").addEventListener("change", () => {
+  const box = el("c-body");
+  const marker = box.value.lastIndexOf("\n\n-- \n");
+  const written = marker >= 0 ? box.value.slice(0, marker) : box.value;
+  const at = box.selectionStart;
+  box.value = written + signatureBlock(el("c-from").value);
+  box.setSelectionRange(Math.min(at, written.length), Math.min(at, written.length));
+});
 
 function closeCompose() {
   el("compose").classList.add("hidden");
@@ -1080,6 +1111,7 @@ el("allow-sender").addEventListener("click", guard(() =>
 async function loadSettings() {
   try {
     const { settings } = await (await api("/settings")).json();
+    state.settings = settings;
     el("s-signature").value = settings["signature.default"] ?? "";
     el("s-ar-enabled").checked = settings["autoreply.enabled"] === "true";
     el("s-ar-start").value = settings["autoreply.start"] ?? "8";
@@ -1308,3 +1340,4 @@ document.addEventListener("keydown", (e) => {
 loadFolder("inbox");
 loadCounts();
 loadIdentities();
+primeSettings();
