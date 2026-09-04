@@ -19,6 +19,7 @@ function inboxAddresses(env: Env): string[] {
   ];
 }
 import { maybeAutoReply } from "./autoreply";
+import { maySend, readQuota } from "./quota";
 import { getSender } from "./senders";
 import type { Env, Folder } from "./types";
 
@@ -275,6 +276,12 @@ async function forwardToMailbox(
   const mode = (env.FORWARD_MODE ?? "all").toLowerCase();
   if (!env.FORWARD_TO || mode === "off") return;
   if (mode === "inbox" && ctx.folder !== "inbox") return;
+
+  // Skipping here is safe: forwarded_ms stays unset, so the scheduled drain
+  // picks it up once the allowance resets rather than losing the forward.
+  if (!maySend(await readQuota(env), "forward")) {
+    throw new Error("daily send allowance nearly spent — deferred to the drain");
+  }
 
   const originalFrom = ctx.headers["from"] ?? ctx.envelopeFrom;
   const replyTo = extractAddress(originalFrom) || ctx.envelopeFrom;

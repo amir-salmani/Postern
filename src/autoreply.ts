@@ -1,4 +1,5 @@
 import { getSender } from "./senders";
+import { maySend, readQuota } from "./quota";
 import { readSettings, withinWorkingHours } from "./settings";
 import type { Env } from "./types";
 
@@ -53,6 +54,12 @@ export async function maybeAutoReply(
   if (ROBOT_PATTERNS.some((p) => localPart.includes(p))) return;
 
   // One reply per sender per cooldown.
+  // An out-of-hours courtesy is not worth the allowance your real mail needs.
+  if (!maySend(await readQuota(env), "autoreply")) {
+    console.warn("postern: skipping auto-reply, daily allowance nearly spent");
+    return;
+  }
+
   const cooldownMs = Number(settings["autoreply.cooldown_hours"] ?? 24) * 3_600_000;
   const previous = await env.DB.prepare(
     `SELECT last_ms FROM autoreplies WHERE sender = ? LIMIT 1`,

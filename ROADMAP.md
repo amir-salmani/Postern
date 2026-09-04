@@ -20,12 +20,6 @@ click/open tracking turned off.
 
 
 
-**Quota guard before sending.** The reminder, the forward drain and the
-auto-reply all send unconditionally, and Resend's free tier bills inbound and
-outbound from one 100/day allowance. A spam burst plus a busy day could
-consume the headroom real mail needs. Nothing checks remaining quota first.
-This is the largest operational risk left.
-
 **A restore path.** Backups write nightly to R2 and nothing has ever read one
 back. An untested backup is a belief, not a backup — a `restore` script that
 rebuilds D1 from an NDJSON snapshot, exercised once against a scratch

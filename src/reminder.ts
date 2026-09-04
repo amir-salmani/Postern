@@ -1,5 +1,6 @@
 import { runBackfill } from "./backfill";
 import { maybeBackup } from "./backup";
+import { maySend, readQuota } from "./quota";
 import { getSender } from "./senders";
 import type { Env } from "./types";
 
@@ -57,6 +58,15 @@ async function drainUnforwarded(env: Env): Promise<void> {
 
   const pending = (results ?? []) as Array<{ id: string }>;
   if (!pending.length) return;
+
+  // Forwarding keeps its own reserve: it is the safety net, so it is the last
+  // thing cut, but it is still cut before the allowance reaches zero and
+  // starts refusing mail you actually wrote.
+  const quota = await readQuota(env);
+  if (!maySend(quota, "forward")) {
+    console.warn(`postern: deferring ${pending.length} forward(s), ${quota.remaining} sends left today`);
+    return;
+  }
 
   let sent = 0;
   for (const message of pending) {
@@ -195,6 +205,11 @@ async function remindUnread(env: Env): Promise<void> {
     const hours = Math.floor((Date.now() - m.received_ms) / 3_600_000);
     return `• ${from || "unknown"} — ${m.subject || "(no subject)"}  [${hours}h ago]`;
   });
+
+  if (!maySend(await readQuota(env), "reminder")) {
+    console.warn("postern: skipping unread reminder, daily allowance nearly spent");
+    return;
+  }
 
   const noun = pending.length === 1 ? "message" : "messages";
   const text = [

@@ -1,6 +1,7 @@
 import { verifyAccess } from "./access";
 import { runBackfill } from "./backfill";
 import { getSender } from "./senders";
+import { maySend, readQuota } from "./quota";
 import { readSettings, signatureFor, writeSettings } from "./settings";
 import type { Env, Folder } from "./types";
 
@@ -549,6 +550,13 @@ async function sendMessage(request: Request, env: Env): Promise<Response> {
   if (requested && !allowed.includes(requested)) {
     return json({ error: `Not permitted to send as ${requested}` }, 403);
   }
+  // Mail you typed is the last thing to be refused, but it is still refused
+  // rather than failing at the provider with a less useful message.
+  const quota = await readQuota(env);
+  if (!maySend(quota, "human")) {
+    return json({ error: `Daily send allowance spent (${quota.usedToday}/${quota.limit}). Resets at 00:00 UTC.` }, 429);
+  }
+
   const from = env.SEND_NAME ? `${env.SEND_NAME} <${address}>` : address;
 
   // The signature is inserted by the composer, not here. Appending invisibly
