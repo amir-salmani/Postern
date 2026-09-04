@@ -2,8 +2,8 @@
   "name": "postern",
   "version": "0.1.0",
   "private": true,
-  "description": "Self-hosted personal email on Cloudflare. Bring a domain.",
-  "license": "MIT",
+  "description": "Personal email on Cloudflare's free tier. Receive, store and read your own mail in your own D1 and R2.",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",

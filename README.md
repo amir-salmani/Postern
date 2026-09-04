@@ -6,120 +6,91 @@ Mail for your domain is received, stored in your own D1 database and R2
 bucket, and read through a web client you deploy to your own Cloudflare
 account. No provider holds your mail. At personal volume it costs nothing.
 
-I run my own mail on this. Everything below was shaped by that, and the
-constraints are more interesting than the feature list.
+In daily use on `amirsalmani.com` since August 2026.
 
-## Three constraints that decided the design
+---
+
+## Why it looks like this
+
+Three constraints decided the design. They are more interesting than the
+feature list, and worth knowing before changing anything.
 
 **Workers Free allows 10 ms of CPU per invocation.** Parsing a multi-megabyte
-MIME message does not fit in that, and a handler that runs out of CPU loses
+MIME message does not fit in that, and a handler that exhausts its CPU loses
 the message. So the server parses nothing: it stores the raw `.eml` and the
-browser parses it. A useful side effect is that the server never handles a
-decoded message body.
+browser parses it on read. A useful side effect is that the server never
+handles a decoded message body.
 
-**A handler that returns without forwarding, storing or rejecting drops the
-mail silently.** Silent loss is the worst possible failure for a mailbox, so
-every path ends in one of those three, and the forward to an existing mailbox
-fires *before* storage — a bug in this code cannot cost you an email.
+**A handler that returns without storing, forwarding or rejecting drops the
+mail silently.** Silent loss is the worst failure a mailbox has, so every path
+ends in one of those three — and mail is forwarded to your existing mailbox
+*before* it is stored. A bug in this code cannot cost you an email.
 
-**Free tiers meter what you least expect.** The mail provider bills inbound
-and outbound against a single daily allowance, so on a catch-all domain a
-spam burst can consume the quota your outgoing mail needs. The dashboard
-shows that number because it is the one worth watching.
-
-## What it does
-
-Mail for your domain is received by Resend, stored in *your* D1 database and
-*your* R2 bucket, and read through a web UI you deploy to your own Cloudflare
-account. Outbound goes through a pluggable sender. No provider holds your
-mail, and nothing here costs money at personal volume.
-
-**Status: in daily use.** Receives, stores, reads, replies, searches, and
-forwards every message on to your existing mailbox. See `ROADMAP.md` for
-what's still missing.
+**The free tier meters what you least expect.** Resend bills inbound and
+outbound against a single 100/day allowance, so on a catch-all domain a spam
+burst can consume the quota your outgoing mail needs. The dashboard shows that
+number because it is the one worth watching.
 
 ## How it works
 
 ```
 sender ──► MX (Resend inbound, catch-all)
-             └─ email.received webhook ──► /api/inbound  ── Svix signature verified
-                   ├─ fetch body ◄── Resend Receiving API
-                   ├─ .eml ─────────► R2   (10 GB free)
-                   ├─ header row ───► D1   (5 GB free)
-                   └─ every other event ──► D1 events table
+             └─ email.received webhook ──► /api/inbound   Svix HMAC verified
+                   ├─ body ◄── Resend Receiving API
+                   ├─ .eml + attachments ──► R2      (10 GB free)
+                   ├─ headers + index ─────► D1      (5 GB free)
+                   ├─ forward ─────────────► your existing mailbox
+                   └─ all other events ────► D1 events table
 
-browser ──► static assets (free, never touch the Worker)
-             └─ /api/* ──► Worker: fetch()  ── Access JWT verified
-                              ├─ list   ◄── D1
-                              ├─ raw    ◄── R2 ──► parsed in the browser
-                              └─ send   ──► Resend
+browser ──► static assets                   served by Cloudflare, no Worker
+             └─ /api/* ──► Worker            Access JWT verified
+                            ├─ list, search ◄── D1
+                            ├─ raw          ◄── R2 ──► parsed in the browser
+                            └─ send         ──► Resend
 ```
 
-Three constraints produced this shape, and it's worth knowing them before
-changing anything:
+A scheduled job every 30 minutes backfills anything the webhook missed,
+forwards anything not yet forwarded, empties expired trash, snapshots the
+database to R2, and sends the unread reminder.
 
-**No MIME parsing on the server.** Workers Free allows 10 ms of CPU per
-invocation, which a multi-megabyte message would exhaust. Resend delivers
-already-parsed content, and the raw `.eml` is reassembled and stored for the
-browser to render. Server CPU stays near zero regardless of message size.
-
-**The webhook is not behind Access.** Resend cannot log in, so `/api/inbound`
-is routed before the Access check and authenticates itself by verifying the
-Svix HMAC over the raw body, rejecting anything unsigned or older than five
-minutes. It needs a **Bypass** policy scoped to that path — see Setup.
-
-**Nothing is lost if the webhook fails.** Resend stores received mail whether
-or not your endpoint answered, and retries. `POST /api/backfill` (the *Sync*
-button) pulls anything that was missed.
+## Design notes
 
 **The catch-all is a quarantine, not an inbox.** Every address that has ever
-leaked from your domain is deliverable, so mail to unknown local-parts is
-stored out of the way rather than in front of you. Addresses listed in
-`INBOX_ADDRESSES` reach the inbox; everything else waits in quarantine.
+leaked from your domain is deliverable. Local-parts you list reach the inbox;
+everything else waits in quarantine where you can review it.
 
-## Delivery marks
+**Sender rules apply retroactively.** Blocking a sender also moves the mail
+you already have from them — a rule that only affected future mail would leave
+you hand-deleting the backlog that made you write the rule.
 
-Sent mail carries a tick showing how far it got: one for accepted by the
-provider, two for accepted by the recipient's mail server, an alert for a
-bounce. Hovering says what each means.
+**Deleting is two-stage.** Trash keeps your copy for 30 days on *your* clock.
+Only permanent deletion removes the object, and it leaves a tombstone — the
+provider still has its copy for 30 days and would otherwise restore yours on
+the next sync.
 
-They stop at handoff on purpose. **No sender can see whether a message was
-opened or whether it landed in the inbox or in spam** — the delivery event
-ends at the receiving server's front door. A tick that implied otherwise
-would be a lie dressed as a feature, so the tooltip says so explicitly.
+**Delivery marks stop at handoff.** One tick means the provider accepted it,
+two means the recipient's mail server did. No sender can see whether a message
+was opened or whether it landed in spam, and the tooltips say so. Click and
+open tracking are off: rewriting a link through a redirect domain is the shape
+of a phishing link, and it breaks for anyone running a content blocker.
 
-## Reading mail safely
+## Security model
 
-HTML email is untrusted code that arrived from a stranger, and remote images
-are read receipts. So message bodies render inside an iframe with `sandbox`
-and no `allow-scripts`, under a CSP of `default-src 'none'` that blocks every
-remote resource. Loading remote images is a button you press per message, not
-a default. Attachments are rendered from in-memory blobs and never executed.
+**Message bodies are untrusted code from strangers.** They render in an iframe
+with `sandbox` and no `allow-scripts`, under `default-src 'none'`. Remote
+images — which are read receipts — are blocked until you press a button, per
+message. Attachments are served from your bucket and never executed.
 
-Cloudflare Access protects a hostname, not a Worker — anyone who learned the
-`workers.dev` URL would otherwise read the whole mailbox. So `src/access.ts`
-verifies the Access JWT on every API request: RS256 signature against the
-team's published certificates, plus `exp`, `nbf` and the application audience
-tag. It fails closed. If `ACCESS_TEAM_DOMAIN` or `ACCESS_AUD` are unset, no
-request is authorised.
+**Cloudflare Access protects a hostname, not a Worker.** Anyone who learned
+the `workers.dev` URL would otherwise read the whole mailbox, so `src/access.ts`
+verifies the Access JWT on every API request: RS256 against the team's
+published certificates, plus `exp`, `nbf` and the audience tag. It fails
+closed — unset variables authorise nothing. Disable the `workers.dev` route
+once a custom hostname exists.
 
-Also disable the `workers.dev` route once you have a custom hostname, so the
-Access policy is the only way in.
-
-## Verify this first
-
-The design assumes `message.forward()` still works after `message.raw` has
-been buffered. The raw stream is documented as single-use, and it is not
-documented whether forwarding consumes it. **The first real message through
-this Worker must confirm the forward arrived.**
-
-If it doesn't, the fix is one of:
-
-- move the `forward()` call above the `arrayBuffer()` read, or
-- drop the buffering and forward only, then re-fetch the message another way.
-
-Run `npx wrangler tail` while you send yourself a test message, and check the
-destination mailbox before trusting anything else in here.
+**`/api/inbound` is deliberately outside Access**, because Resend cannot log
+in. It authenticates itself by verifying the Svix HMAC over the raw body and
+rejects anything unsigned or older than five minutes.
 
 ## Setup
 
@@ -128,82 +99,65 @@ Requires a domain on Cloudflare and a Resend account.
 ```bash
 npm install
 
-# Storage
-npx wrangler d1 create postern           # put the id into wrangler.jsonc
+npx wrangler d1 create postern            # copy the id into wrangler.jsonc
 npx wrangler r2 bucket create postern-raw
-npm run schema
+npx wrangler d1 migrations apply postern --remote
 
-# Config: set MAIL_DOMAIN, INBOX_ADDRESSES and SEND_FROM in wrangler.jsonc
+# Set MAIL_DOMAIN, INBOX_ADDRESSES, SEND_FROM and SEND_ADDRESSES
+# in wrangler.jsonc, then:
 npm run deploy
 
-npx wrangler secret put RESEND_API_KEY       # needs full access, not send-only
+npx wrangler secret put RESEND_API_KEY        # full access, not send-only
 npx wrangler secret put RESEND_WEBHOOK_SECRET
-npx wrangler secret put FORWARD_TO           # optional: BCC of sent mail
+npx wrangler secret put FORWARD_TO            # your existing mailbox
 ```
 
-In Resend: verify your domain, enable **Receiving**, and add a webhook for
-`email.received` pointing at `https://mail.yourdomain.com/api/inbound`.
+**In Resend:** verify the domain, enable Receiving, and add a webhook for
+`email.received` pointing at `https://mail.yourdomain.com/api/inbound`. Turn
+click and open tracking **off**.
 
-In Cloudflare Zero Trust, protect the app with Access — then add a **second**
-self-hosted application scoped to the path `api/inbound` with a single
-**Bypass / Everyone** policy. Access matches the most specific path first, so
-the webhook gets through while the rest of the UI stays gated.
+**In Cloudflare Zero Trust:** create a self-hosted Access application for
+`mail.yourdomain.com` with a policy allowing your own email. Then create a
+**second** application scoped to the path `api/inbound` with a single
+**Bypass / Everyone** policy — Access matches the most specific path first, so
+the webhook gets through while the UI stays gated. Copy the first
+application's **AUD tag** and your team domain into `ACCESS_AUD` and
+`ACCESS_TEAM_DOMAIN`, then redeploy.
 
-Then create a Cloudflare Access application for the hostname you deployed to,
-and copy its **Application Audience (AUD) tag** and your team domain into
-`ACCESS_AUD` and `ACCESS_TEAM_DOMAIN` in `wrangler.jsonc`. Redeploy.
+**DNS:** publish DMARC. With every sender routed through one verified
+provider, `p=quarantine` is safe immediately.
 
-Then in the dashboard, **Email Routing → Routing Rules**, set the catch-all
-action to *Send to a Worker* → `postern-ingest`.
+```
+_dmarc   TXT   v=DMARC1; p=quarantine; rua=mailto:dmarc@yourdomain.com
+```
 
-`FORWARD_TO` must be an address you have already verified as an Email Routing
-destination, or forwarding fails silently.
+## Verifying a deploy
 
-## Checking it works
+Schema changes are the thing to check properly — confirm with a query, never
+by reading a command's output.
 
 ```bash
-npx wrangler tail                                    # live logs
 npx wrangler d1 execute postern --remote \
-  --command "SELECT received_ms, folder, envelope_from, subject FROM messages ORDER BY received_ms DESC LIMIT 10"
+  --command "SELECT COUNT(*) FROM messages"
+
+npx wrangler tail          # live logs while you send yourself a test message
 ```
 
-## Roadmap
-
-- **Phase 1 — ingest.** ✅ Store to D1 + R2, forward to your mailbox.
-- **Phase 2 — read-only UI.** ✅ Behind Cloudflare Access, MIME parsed
-  client-side with a vendored `postal-mime`. Static assets bypass the Worker,
-  so page loads cost no quota. No polling — refresh on focus, throttled.
-- **Phase 3 — compose and reply.** ✅ Via `src/senders/`, Resend by default.
-  Sets `In-Reply-To` and `References`, and writes a copy of every sent message
-  back to D1 — Resend has no notion of your mailbox, so without that your own
-  sent mail exists nowhere you can read it.
-- **Phase 4 — search.** ✅ D1 FTS5 over subject, sender and body, indexed at
-  ingest where the body is already a decoded string.
-- **Phase 5 — signatures.** Planned. Per-identity, appended client-side so
-  it stays editable, `-- ` delimited so clients can collapse it.
-- **Phase 6 — auto-reply / working hours.** Planned. Harder than it looks —
-  see ROADMAP.md for the rules that stop a vacation responder becoming a
-  spam cannon.
-- **Phase 7 — encryption at rest.** The browser already does the parsing, so
-  the server never needs to see a decoded body. Encrypt the `.eml` before it
-  reaches R2. Honest limit: Resend terminates inbound SMTP, so this is
-  encryption at rest, not end-to-end.
-
+The first real message should appear in the UI *and* in the mailbox you set
+as `FORWARD_TO`.
 
 ## Free tier headroom
 
-| Resource | Free | Personal use |
+| Resource | Free allowance | What uses it |
 |---|---|---|
-| Worker invocations | 100k/day | inbound mail + UI opens |
-| D1 | 5 GB, 5M row reads/day | ~1 row per message |
+| Worker invocations | 100k/day | inbound mail and API calls; static assets are free |
+| D1 | 5 GB, 5M row reads/day | roughly one row per message |
 | R2 | 10 GB | years of `.eml` at personal volume |
-| Resend free tier | 3,000/mo, 100/day | **shared between inbound and outbound** |
+| Resend | 3,000/mo, 100/day | **shared between inbound and outbound** |
 
-Two things to watch. A UI that polls for new mail would burn Worker
-invocations for nothing, which is why the client refreshes on focus and never
-on a timer. And Resend's free tier counts inbound *and* outbound against one
-100/day allowance — on a catch-all domain, a spam wave can consume the
-allowance your outgoing mail needs.
+The client never polls. Inbound mail and the UI draw on the same invocation
+budget, so a background timer asking "anything new?" would spend the quota
+that receiving mail needs.
 
 ## Development
 
@@ -215,11 +169,18 @@ npm run build       # dry-run bundle, no deploy
 npm run dev
 ```
 
-`web/vendor/` is committed on purpose. A mail client should not fetch a
+`web/vendor/` is committed on purpose: a mail client should not fetch its
 parser from a CDN at runtime, and there is no build step to add one.
+
+Roadmap and known gaps: [ROADMAP.md](ROADMAP.md).
 
 ## Licence
 
-MIT.
+**Personal, non-commercial use** — [PolyForm Noncommercial 1.0.0](LICENSE).
 
-`web/vendor/postal-mime/` is vendored from [postal-mime](https://github.com/postalsys/postal-mime), MIT-0, licence included alongside it.
+You may run it, modify it and share it for any non-commercial purpose. You may
+not sell it, host it as a paid service, or use it in a commercial product.
+
+`web/vendor/postal-mime/` is vendored from
+[postal-mime](https://github.com/postalsys/postal-mime) under MIT-0; its
+licence travels with it.
