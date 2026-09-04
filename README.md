@@ -1,6 +1,33 @@
 # Postern
 
-Personal email on your own infrastructure. Bring a domain.
+**Personal email on Cloudflare's free tier. Bring a domain.**
+
+Mail for your domain is received, stored in your own D1 database and R2
+bucket, and read through a web client you deploy to your own Cloudflare
+account. No provider holds your mail. At personal volume it costs nothing.
+
+I run my own mail on this. Everything below was shaped by that, and the
+constraints are more interesting than the feature list.
+
+## Three constraints that decided the design
+
+**Workers Free allows 10 ms of CPU per invocation.** Parsing a multi-megabyte
+MIME message does not fit in that, and a handler that runs out of CPU loses
+the message. So the server parses nothing: it stores the raw `.eml` and the
+browser parses it. A useful side effect is that the server never handles a
+decoded message body.
+
+**A handler that returns without forwarding, storing or rejecting drops the
+mail silently.** Silent loss is the worst possible failure for a mailbox, so
+every path ends in one of those three, and the forward to an existing mailbox
+fires *before* storage — a bug in this code cannot cost you an email.
+
+**Free tiers meter what you least expect.** The mail provider bills inbound
+and outbound against a single daily allowance, so on a catch-all domain a
+spam burst can consume the quota your outgoing mail needs. The dashboard
+shows that number because it is the one worth watching.
+
+## What it does
 
 Mail for your domain is received by Resend, stored in *your* D1 database and
 *your* R2 bucket, and read through a web UI you deploy to your own Cloudflare
