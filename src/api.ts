@@ -11,7 +11,13 @@ const PAGE_SIZE = 50;
 const SELECT_COLUMNS = `SELECT m.id, m.thread_id, m.envelope_from, m.envelope_to, m.header_from,
             m.subject, m.message_id, m.in_reply_to, m.refs,
             m.received_ms, m.size_bytes, m.folder, m.seen, m.has_attach,
-            m.spf, m.dkim, m.dmarc, m.trashed_ms,
+            m.spf, m.dkim, m.dmarc, m.trashed_ms, m.provider_id,
+            (SELECT CASE
+               WHEN SUM(e.type IN ('email.bounced','email.failed','email.complained')) > 0 THEN 'failed'
+               WHEN SUM(e.type = 'email.delivered') > 0 THEN 'delivered'
+               WHEN SUM(e.type = 'email.sent') > 0 THEN 'sent'
+               ELSE NULL END
+             FROM events e WHERE e.email_id = m.provider_id) AS delivery,
             (SELECT COUNT(*) FROM messages t
               WHERE t.thread_id = m.thread_id AND t.folder != 'trash') AS thread_count
        FROM messages m`;
@@ -585,6 +591,7 @@ async function sendMessage(request: Request, env: Env): Promise<Response> {
       subject: subject || "(no subject)",
       text: signedText,
       messageId: result.messageId ? `<${result.messageId}@resend>` : null,
+      providerId: result.messageId || null,
       inReplyTo: body.inReplyTo ?? null,
       references: references || null,
       threadId: body.threadId ?? null,
@@ -603,7 +610,7 @@ async function storeSentCopy(
   env: Env,
   m: {
     to: string[]; from: string; address: string; subject: string; text: string;
-    messageId: string | null; inReplyTo: string | null;
+    messageId: string | null; providerId: string | null; inReplyTo: string | null;
     references: string | null; threadId: string | null;
   },
 ): Promise<void> {
@@ -637,14 +644,14 @@ async function storeSentCopy(
        id, r2_key, message_id, in_reply_to, refs, thread_id,
        envelope_from, envelope_to, header_from, subject,
        date_ms, received_ms, size_bytes,
-       auth_results, spf, dkim, dmarc, folder, seen, has_attach
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, 'sent', 1, 0)`,
+       auth_results, spf, dkim, dmarc, folder, seen, has_attach, provider_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, 'sent', 1, 0, ?)`,
   )
     .bind(
       id, r2Key, m.messageId, m.inReplyTo, m.references,
       m.threadId ?? m.messageId ?? id,
       m.address, m.to.join(", "), m.from, m.subject,
-      now, now, eml.length,
+      now, now, eml.length, m.providerId,
     )
     .run();
 }

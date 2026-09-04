@@ -168,6 +168,9 @@ function renderList(messages) {
       span("preview", message.envelope_to || ""),
     );
 
+    const mark = deliveryMark(message.delivery);
+    if (mark) item.querySelector(".from").prepend(mark);
+
     if (message.thread_count > 1) {
       const count = document.createElement("span");
       count.className = "thread-count";
@@ -252,6 +255,40 @@ function span(className, text) {
   return node;
 }
 
+/**
+ * Delivery state for mail you sent — handoff only.
+ *
+ * One tick: Resend accepted it. Two ticks: the recipient's mail server
+ * accepted it. Neither says anything about whether a human saw it, and the
+ * tooltips say so, because a tick that looks like a read receipt is a lie
+ * dressed as a feature.
+ */
+const DELIVERY = {
+  sent: {
+    label: "Accepted by Resend — not yet confirmed by the recipient's server",
+    path: '<path d="M2.5 8.4l3.2 3.2L13.5 3.8"/>',
+  },
+  delivered: {
+    label: "Accepted by the recipient's mail server. This is not a read receipt — no sender can see whether a message was opened or where it was filed.",
+    path: '<path d="M1.5 8.4l3.2 3.2L12.3 3.8"/><path d="M6.6 11.6L14.5 3.8"/>',
+  },
+  failed: {
+    label: "Rejected — the message bounced or was refused. See Dashboard → Activity.",
+    path: '<path d="M8 4.2v4.6"/><path d="M8 11.4v.1"/><circle cx="8" cy="8" r="6.1"/>',
+  },
+};
+
+function deliveryMark(state) {
+  const spec = DELIVERY[state];
+  if (!spec) return null;
+  const wrap = document.createElement("span");
+  wrap.className = `delivery ${state}`;
+  wrap.title = spec.label;
+  wrap.setAttribute("aria-label", spec.label);
+  wrap.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${spec.path}</svg>`;
+  return wrap;
+}
+
 function tag(text, kind = "") {
   const node = document.createElement("span");
   node.className = `tag ${kind}`.trim();
@@ -297,6 +334,16 @@ async function openMessage(message) {
   el("from").textContent = message.header_from || message.envelope_from;
   el("to").textContent = message.envelope_to ? `to ${message.envelope_to}` : "";
   el("date").textContent = new Date(message.received_ms).toLocaleString();
+  const readerMark = el("delivery-mark");
+  readerMark.replaceChildren();
+  const detail = deliveryMark(message.delivery);
+  if (detail) {
+    readerMark.append(detail);
+    const word = document.createElement("span");
+    word.textContent = message.delivery === "failed" ? "Not delivered"
+      : message.delivery === "delivered" ? "Delivered to their server" : "Sent";
+    readerMark.append(word);
+  }
   el("auth").textContent = message.spf || message.dkim || message.dmarc
     ? `spf ${message.spf ?? "–"} · dkim ${message.dkim ?? "–"} · dmarc ${message.dmarc ?? "–"}`
     : "";

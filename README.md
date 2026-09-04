@@ -50,6 +50,17 @@ leaked from your domain is deliverable, so mail to unknown local-parts is
 stored out of the way rather than in front of you. Addresses listed in
 `INBOX_ADDRESSES` reach the inbox; everything else waits in quarantine.
 
+## Delivery marks
+
+Sent mail carries a tick showing how far it got: one for accepted by the
+provider, two for accepted by the recipient's mail server, an alert for a
+bounce. Hovering says what each means.
+
+They stop at handoff on purpose. **No sender can see whether a message was
+opened or whether it landed in the inbox or in spam** — the delivery event
+ends at the receiving server's front door. A tick that implied otherwise
+would be a lie dressed as a feature, so the tooltip says so explicitly.
+
 ## Reading mail safely
 
 HTML email is untrusted code that arrived from a stranger, and remote images
