@@ -73,5 +73,6 @@ named in the trailer instead. Liftable on a paid plan.
 
 ## Elsewhere, not in this repo
 
-**Update amirsalmani.com** to list Postern as a project. The Projects nav item
-is still "soon".
+**Write the post.** Draft is at `AmirSalmani/docs/post-what-broke.md` — the
+ledger of what broke, which is the part worth reading. Publish on the site,
+then link it from the Projects entry.
