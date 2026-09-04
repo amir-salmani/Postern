@@ -8,6 +8,12 @@ account. No provider holds your mail. At personal volume it costs nothing.
 
 In daily use on `amirsalmani.com` since August 2026.
 
+![The Postern dashboard: unread and storage counters, free-tier usage against
+Resend's shared inbound/outbound allowance, and fourteen days of mail volume](docs/screenshot.png)
+
+*Rendered with placeholder data — a screenshot of a real inbox would publish
+other people's names.*
+
 ---
 
 ## Why it looks like this
