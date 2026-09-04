@@ -14,6 +14,10 @@ const KEEP_DAYS = 30;
  *
  * Written as NDJSON so a restore can stream it rather than parse megabytes of
  * JSON in a Worker.
+ *
+ * messages_fts is deliberately excluded: it is an index derived from
+ * messages, and restoring it row by row would be slower and more fragile than
+ * rebuilding it. scripts/restore.mjs rebuilds it after loading.
  */
 export async function maybeBackup(env: Env): Promise<void> {
   const settings = await readSettings(env);
@@ -21,7 +25,11 @@ export async function maybeBackup(env: Env): Promise<void> {
   if (Date.now() - last < DAY_MS) return;
 
   const stamp = new Date().toISOString().slice(0, 10);
-  const tables = ["messages", "attachments", "rules", "tombstones", "settings", "autoreplies"];
+  // events was missing here until a restore into a scratch database showed it
+  // absent. It holds every delivery, bounce and complaint, which is what the
+  // delivery marks read — losing it would leave sent mail with no history.
+  const tables = ["messages", "attachments", "rules", "tombstones", "settings",
+                  "autoreplies", "events"];
   const lines: string[] = [];
 
   for (const table of tables) {

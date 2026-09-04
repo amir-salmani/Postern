@@ -14,7 +14,8 @@
     "tail": "wrangler tail",
     "vendor": "rm -rf web/vendor/postal-mime && mkdir -p web/vendor/postal-mime && cp -r node_modules/postal-mime/src/. web/vendor/postal-mime/",
     "build": "wrangler deploy --dry-run --outdir=.wrangler/build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "restore": "node scripts/restore.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260820.1",

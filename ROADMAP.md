@@ -20,11 +20,6 @@ click/open tracking turned off.
 
 
 
-**A restore path.** Backups write nightly to R2 and nothing has ever read one
-back. An untested backup is a belief, not a backup — a `restore` script that
-rebuilds D1 from an NDJSON snapshot, exercised once against a scratch
-database.
-
 **Bounce surfacing.** `email.bounced` and `email.failed` are recorded and
 otherwise silent. Delivery marks show it on the message, but nothing tells
 you — a message that never arrived should not require opening the dashboard
